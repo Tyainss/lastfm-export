@@ -4,4 +4,14 @@ version = "0.1.0"
 description = "Add your description here"
 readme = "README.md"
 requires-python = ">=3.12"
-dependencies = []
+dependencies = [
+    "requests>=2.32.5",
+]
+
+[dependency-groups]
+dev = [
+    "hatchling>=1.28.0",
+    "pytest>=9.0.2",
+    "responses>=0.25.8",
+    "ruff>=0.15.1",
+]
