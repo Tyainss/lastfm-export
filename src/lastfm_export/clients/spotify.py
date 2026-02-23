@@ -6,7 +6,7 @@ from typing import Any, Dict, Optional, Tuple
 
 import requests
 
-from lastfm_export.clients.http import HttpClient
+from lastfm_export.clients.http import HttpClient, RetryConfig
 from lastfm_export.models import SpotifyTrackEnrichment
 
 logger = logging.getLogger(__name__)
@@ -39,13 +39,14 @@ class SpotifyClient:
         self._token_session = requests.Session()
         self._token_session.headers["User-Agent"] = user_agent
 
-        self.http = http or HttpClient(
-            user_agent=user_agent,
-            timeout_secs=timeout_secs,
-            retry=None,
-        )
-        # Ensure Retry-After cap is respected for Spotify too
-        self.http._retry.max_retry_after_secs = int(max_retry_after_secs)
+        if http is not None:
+            self.http = http
+        else:
+            self.http = HttpClient(
+                user_agent=user_agent,
+                timeout_secs=timeout_secs,
+                retry=RetryConfig(max_retry_after_secs=int(max_retry_after_secs)),
+            )
 
     def search_track_first(self, *, track_name: str, artist_name: str) -> Optional[Dict[str, Any]]:
         token = self._ensure_token()
