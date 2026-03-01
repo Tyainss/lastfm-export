@@ -22,7 +22,11 @@ def export_scrobbles(
         to_unix: Inclusive upper bound Unix timestamp (seconds).
         page_size: Page size forwarded to the client.
         page_limit: Stops after this many pages (useful for testing/sampling).
-        watermark: If set, skips scrobbles with timestamp_unix <= watermark.
+        watermark: If set, yields only scrobbles with timestamp_unix > watermark.
+
+    Notes:
+        The Last.fm API returns recent tracks newest -> oldest. Because of that ordering,
+        once we hit a scrobble with timestamp_unix <= watermark we can stop early.
     """
     for scrobble in lastfm.iter_recent_tracks(
         from_unix=from_unix,
@@ -31,5 +35,5 @@ def export_scrobbles(
         page_limit=page_limit,
     ):
         if watermark is not None and scrobble.timestamp_unix <= watermark:
-            continue
+            return
         yield scrobble
