@@ -6,6 +6,7 @@ readme = "README.md"
 requires-python = ">=3.12"
 dependencies = [
     "requests>=2.32.5",
+    "typer>=0.24.1",
 ]
 
 [dependency-groups]
@@ -15,3 +16,6 @@ dev = [
     "responses>=0.25.8",
     "ruff>=0.15.1",
 ]
+
+[project.scripts]
+lastfm-export = "lastfm_export.cli.app:main"
