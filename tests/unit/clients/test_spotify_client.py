@@ -1,7 +1,5 @@
-import time
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List
 
-import pytest
 
 from lastfm_export.clients.spotify import SpotifyClient
 from lastfm_export.models import SpotifyTrackEnrichment

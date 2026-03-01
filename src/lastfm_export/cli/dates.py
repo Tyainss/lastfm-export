@@ -1,6 +1,6 @@
 from dataclasses import dataclass
 from datetime import date, datetime, timedelta, timezone
-from typing import Optional, Tuple
+from typing import Optional
 
 from lastfm_export.errors import ConfigError
 
