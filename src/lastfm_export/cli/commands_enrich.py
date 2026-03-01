@@ -158,6 +158,7 @@ def enrich_spotify_cmd(
 ) -> None:
     in_fmt = infer_format(in_path, in_format)
     out_fmt = infer_format(out, out_format)
+    ensure_overwrite_allowed(out=out, fmt=out_fmt, overwrite=overwrite)
 
     cid = get_env_or_value("SPOTIFY_CLIENT_ID", client_id)
     csec = get_env_or_value("SPOTIFY_CLIENT_SECRET", client_secret)
