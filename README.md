@@ -74,8 +74,17 @@ Optional filters:
 ```bash
 lastfm-export scrobbles export \
   --out scrobbles.ndjson \
-  --from-unix 1704067200 \
-  --to-unix 1706745600
+  --from 2026-01-01 \
+  --to 2026-02-01
+```
+
+You can also pass full datetimes:
+
+```bash
+lastfm-export scrobbles export \
+  --out scrobbles.ndjson \
+  --from 2026-01-01T00:00:00 \
+  --to 2026-02-01T23:59:59
 ```
 
 Resume (incremental export):

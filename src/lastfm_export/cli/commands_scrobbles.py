@@ -7,6 +7,7 @@ import typer
 from lastfm_export.clients.lastfm import LastFMClient
 from lastfm_export.errors import ConfigError
 from lastfm_export.cli._common import ensure_overwrite_allowed, get_env_or_value, infer_format, read_watermark
+from lastfm_export.cli.dates import resolve_time_window
 from lastfm_export.io.sinks import csv_sink, json_sink, ndjson_sink
 from lastfm_export.pipelines.lastfm_export import export_scrobbles
 
@@ -19,8 +20,10 @@ def export_cmd(
     format: Optional[str] = typer.Option(None, "--format", help="ndjson | json | csv (default: inferred from --out)."),
     overwrite: bool = typer.Option(False, "--overwrite", help="Overwrite output file."),
     resume: str = typer.Option("auto", "--resume", help="auto | off"),
-    from_unix: Optional[int] = typer.Option(None, "--from", help="Inclusive start timestamp (unix seconds)."),
-    to_unix: Optional[int] = typer.Option(None, "--to", help="Inclusive end timestamp (unix seconds)."),
+    from_text: Optional[str] = typer.Option(None, "--from", help="Start date/datetime (UTC). YYYY-MM-DD or YYYY-MM-DDTHH:MM:SS"),
+    to_text: Optional[str] = typer.Option(None, "--to", help="End date/datetime (UTC). YYYY-MM-DD or YYYY-MM-DDTHH:MM:SS"),
+    from_unix: Optional[int] = typer.Option(None, "--from-unix", help="Inclusive start timestamp (unix seconds, UTC)."),
+    to_unix: Optional[int] = typer.Option(None, "--to-unix", help="Inclusive end timestamp (unix seconds, UTC)."),
     page_size: int = typer.Option(200, "--page-size", help="Last.fm page size."),
     page_limit: Optional[int] = typer.Option(None, "--page-limit", help="Stop after this many pages."),
     api_key: Optional[str] = typer.Option(None, "--api-key", help="Last.fm API key (default: env LASTFM_API_KEY)."),
@@ -37,11 +40,18 @@ def export_cmd(
     if resume.lower() == "auto" and out.exists() and not overwrite:
         watermark = read_watermark(out, fmt)
 
+    window = resolve_time_window(
+        from_unix=from_unix,
+        to_unix=to_unix,
+        from_text=from_text,
+        to_text=to_text,
+    )
+
     lastfm = LastFMClient(api_key=api_key_val, username=username_val, user_agent=user_agent)
     scrobbles = export_scrobbles(
         lastfm=lastfm,
-        from_unix=from_unix,
-        to_unix=to_unix,
+        from_unix=window.from_unix,
+        to_unix=window.to_unix_inclusive,
         page_size=page_size,
         page_limit=page_limit,
         watermark=watermark,
