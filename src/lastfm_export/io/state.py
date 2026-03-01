@@ -6,13 +6,13 @@ from lastfm_export.io.readers import read_csv_records, read_json_records, read_n
 
 
 def read_watermark_from_ndjson(path: Path) -> Optional[int]:
-    """Return the last timestamp_unix found in an NDJSON file, else None."""
+    """Return the max timestamp_unix found in an NDJSON file, else None."""
     return _read_watermark(path, read_ndjson_records, ts_field="timestamp_unix")
 
 
 def read_watermark_from_json(path: Path) -> Optional[int]:
     """
-    Return the last timestamp_unix found in a JSON array file, else None.
+    Return the max timestamp_unix found in a JSON array file, else None.
 
     Note: JSON arrays are not append-friendly; this is mainly for symmetry and small files.
     """
@@ -21,7 +21,7 @@ def read_watermark_from_json(path: Path) -> Optional[int]:
 
 def read_watermark_from_csv(path: Path) -> Optional[int]:
     """
-    Return the last timestamp_unix found in a CSV file, else None.
+    Return the max timestamp_unix found in a CSV file, else None.
 
     Note: CSV values are strings; this coerces to int when possible.
     """
@@ -37,13 +37,17 @@ def _read_watermark(
     if not path.exists():
         return None
 
-    last_ts: Optional[int] = None
+    max_ts: Optional[int] = None
     for rec in reader(path):
         ts = rec.get(ts_field)
         if ts is None:
             continue
         try:
-            last_ts = int(ts)
+            val = int(ts)
         except (TypeError, ValueError):
             continue
-    return last_ts
+        
+        if max_ts is None or val > max_ts:
+            max_ts = val
+
+    return max_ts
