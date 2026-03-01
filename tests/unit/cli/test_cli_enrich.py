@@ -4,7 +4,7 @@ from pathlib import Path
 from typer.testing import CliRunner
 
 from lastfm_export.cli.app import app
-from lastfm_export.models import EnrichedScrobble, Scrobble, SpotifyTrackEnrichment
+from lastfm_export.models import SpotifyTrackEnrichment
 
 runner = CliRunner()
 
@@ -25,22 +25,19 @@ def test_cli_enrich_spotify_reads_ndjson_and_writes_ndjson(monkeypatch, tmp_path
         def __init__(self, *args, **kwargs) -> None:
             pass
 
-    def fake_enrich_scrobbles_with_spotify(**kwargs):
-        sc = Scrobble(artist_name="A", track_name="T", album_name=None, timestamp_unix=1)
-        enr = SpotifyTrackEnrichment(
-            spotify_track_id="sid",
-            spotify_artist_id=None,
-            spotify_album_id=None,
-            spotify_track_url=None,
-            popularity=None,
-        )
-        yield EnrichedScrobble(scrobble=sc, spotify=enr)
+        def build_track_enrichment(self, *, track_name: str, artist_name: str):
+            return SpotifyTrackEnrichment(
+                spotify_track_id="sid",
+                spotify_artist_id=None,
+                spotify_album_id=None,
+                spotify_track_url=None,
+                popularity=None,
+            )
 
     monkeypatch.setenv("SPOTIFY_CLIENT_ID", "id")
     monkeypatch.setenv("SPOTIFY_CLIENT_SECRET", "sec")
 
     monkeypatch.setattr("lastfm_export.cli.commands_enrich.SpotifyClient", _FakeSpotifyClient)
-    monkeypatch.setattr("lastfm_export.cli.commands_enrich.enrich_scrobbles_with_spotify", fake_enrich_scrobbles_with_spotify)
 
     result = runner.invoke(
         app,

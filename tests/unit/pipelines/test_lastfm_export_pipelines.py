@@ -44,12 +44,36 @@ def test_export_scrobbles_yields_all_without_watermark():
 
 def test_export_scrobbles_filters_by_watermark():
     items = [
-        Scrobble(artist_name="A", track_name="T1", album_name=None, timestamp_unix=10),
-        Scrobble(artist_name="A", track_name="T2", album_name=None, timestamp_unix=20),
         Scrobble(artist_name="A", track_name="T3", album_name=None, timestamp_unix=21),
+        Scrobble(artist_name="A", track_name="T2", album_name=None, timestamp_unix=20),
+        Scrobble(artist_name="A", track_name="T1", album_name=None, timestamp_unix=10),
     ]
     lastfm = _FakeLastFMClient(items)
 
     out = list(export_scrobbles(lastfm=lastfm, watermark=20))
 
     assert [s.track_name for s in out] == ["T3"]
+
+
+
+def test_export_scrobbles_stops_early_when_reaching_watermark():
+    seen: list[int] = []
+
+    class _StopAwareLastFMClient(_FakeLastFMClient):
+        def iter_recent_tracks(self, **kwargs):
+            for sc in self._items:
+                seen.append(sc.timestamp_unix)
+                yield sc
+
+    items = [
+        Scrobble(artist_name="A", track_name="T3", album_name=None, timestamp_unix=21),
+        Scrobble(artist_name="A", track_name="T2", album_name=None, timestamp_unix=20),
+        Scrobble(artist_name="A", track_name="T1", album_name=None, timestamp_unix=10),
+    ]
+    lastfm = _StopAwareLastFMClient(items)
+
+    out = list(export_scrobbles(lastfm=lastfm, watermark=20))
+
+    assert [s.timestamp_unix for s in out] == [21]
+    # Stops as soon as it sees <= watermark
+    assert seen == [21, 20]
