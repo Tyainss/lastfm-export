@@ -1,4 +1,4 @@
-import os
+
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Callable, Dict, Iterable, Iterator, Optional, Tuple
@@ -7,6 +7,7 @@ import typer
 
 from lastfm_export.clients.spotify import SpotifyClient
 from lastfm_export.errors import ConfigError
+from lastfm_export.cli._common import ensure_overwrite_allowed, get_env_or_value, infer_format
 from lastfm_export.io.readers import read_csv_records, read_json_records, read_ndjson_records
 from lastfm_export.io.sinks import csv_sink, json_sink, ndjson_sink
 from lastfm_export.models import Scrobble, SpotifyTrackEnrichment
@@ -14,27 +15,6 @@ from lastfm_export.models import Scrobble, SpotifyTrackEnrichment
 enrich_app = typer.Typer(no_args_is_help=True)
 
 Record = Dict[str, Any]
-
-def _get_env_or_value(name: str, value: Optional[str]) -> str:
-    if value:
-        return value
-    env = os.getenv(name)
-    if env:
-        return env
-    raise ConfigError(f"Missing required config: {name}")
-
-
-def _infer_format(path: Path, fmt: Optional[str]) -> str:
-    if fmt:
-        return fmt.lower()
-    ext = path.suffix.lower()
-    if ext == ".ndjson":
-        return "ndjson"
-    if ext == ".json":
-        return "json"
-    if ext == ".csv":
-        return "csv"
-    raise ConfigError("Could not infer format from file extension. Use --format.")
 
 def _norm_key(value: str) -> str:
     return " ".join(value.split()).strip().lower()
@@ -91,9 +71,9 @@ def _resolve_sink(out: Path, fmt: str, *, overwrite: bool) -> Callable[[Iterable
     if fmt == "ndjson":
         return ndjson_sink(out, overwrite=overwrite)
     if fmt == "json":
-        return json_sink(out, overwrite=True)
+        return json_sink(out, overwrite=overwrite)
     if fmt == "csv":
-        return csv_sink(out, overwrite=True)
+        return csv_sink(out, overwrite=overwrite)
     raise ConfigError(f"Unsupported output format: {fmt}")
 
 
@@ -176,11 +156,11 @@ def enrich_spotify_cmd(
     ),
     user_agent: str = typer.Option("lastfm-export", "--user-agent", help="HTTP User-Agent header."),
 ) -> None:
-    in_fmt = _infer_format(in_path, in_format)
-    out_fmt = _infer_format(out, out_format)
+    in_fmt = infer_format(in_path, in_format)
+    out_fmt = infer_format(out, out_format)
 
-    cid = _get_env_or_value("SPOTIFY_CLIENT_ID", client_id)
-    csec = _get_env_or_value("SPOTIFY_CLIENT_SECRET", client_secret)
+    cid = get_env_or_value("SPOTIFY_CLIENT_ID", client_id)
+    csec = get_env_or_value("SPOTIFY_CLIENT_SECRET", client_secret)
 
     records = _load_records(in_path, in_fmt)
     spotify = SpotifyClient(client_id=cid, client_secret=csec, user_agent=user_agent)
