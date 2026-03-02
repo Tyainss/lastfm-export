@@ -1,0 +1,33 @@
+[build-system]
+requires = ["hatchling>=1.28.0"]
+build-backend = "hatchling.build"
+
+[project]
+name = "lastfm-export"
+version = "0.1.0"
+description = "Export your Last.fm listening history and optionally enrich it with Spotify metadata."
+readme = "README.md"
+requires-python = ">=3.10"
+license = { file = "LICENSE" }
+keywords = ["lastfm", "spotify", "export", "scrobbles", "cli"]
+dependencies = [
+    "requests>=2.32.5",
+    "typer>=0.24.1",
+]
+
+[project.optional-dependencies]
+dotenv = ["python-dotenv>=1.2.1"]
+
+[dependency-groups]
+dev = [
+    "hatchling>=1.28.0",
+    "pytest>=9.0.2",
+    "responses>=0.25.8",
+    "ruff>=0.15.1",
+]
+
+[project.scripts]
+lastfm-export = "lastfm_export.cli.app:app"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/lastfm_export"]
