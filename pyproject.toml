@@ -9,6 +9,7 @@ description = "Export your Last.fm listening history and optionally enrich it wi
 readme = "README.md"
 requires-python = ">=3.10"
 license = { file = "LICENSE" }
+keywords = ["lastfm", "spotify", "export", "scrobbles", "cli"]
 dependencies = [
     "requests>=2.32.5",
     "typer>=0.24.1",
@@ -26,4 +27,7 @@ dev = [
 ]
 
 [project.scripts]
-lastfm-export = "lastfm_export.cli.app:main"
+lastfm-export = "lastfm_export.cli.app:app"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/lastfm_export"]
