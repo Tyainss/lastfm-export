@@ -28,7 +28,28 @@ jobs:
       - name: Build
         run: uv build --no-sources
 
+      - name: Preflight (TestPyPI upload endpoint)
+        env:
+          UV_PUBLISH_URL: https://test.pypi.org/legacy/
+        run: |
+          set -euo pipefail
+          echo "Checking TestPyPI upload endpoint..."
+          curl -fsSIL "$UV_PUBLISH_URL" >/dev/null
+
       - name: Publish (TestPyPI)
         env:
           UV_PUBLISH_URL: https://test.pypi.org/legacy/
-        run: uv publish
+        run: |
+          set -euo pipefail
+          # TestPyPI is often flaky; retry on transient 5xx.
+          for i in 1 2 3 4 5 6; do
+            echo "Attempt $i: uv publish"
+            if uv publish; then
+              exit 0
+            fi
+            sleep_seconds=$((i * 20))
+            echo "Publish failed. Sleeping ${sleep_seconds}s before retry..."
+            sleep "$sleep_seconds"
+          done
+          echo "Publish failed after multiple retries."
+          exit 1
