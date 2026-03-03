@@ -1,0 +1,34 @@
+name: Release (TestPyPI)
+
+on:
+  push:
+    tags:
+      - "test-v*"
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    permissions:
+      id-token: write
+      contents: read
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Set up uv
+        uses: astral-sh/setup-uv@v6
+        with:
+          enable-cache: true
+
+      - name: Build
+        run: uv build --no-sources
+
+      - name: Publish (TestPyPI)
+        env:
+          UV_PUBLISH_URL: https://test.pypi.org/legacy/
+        run: uv publish
