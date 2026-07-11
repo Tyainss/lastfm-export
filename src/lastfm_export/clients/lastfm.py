@@ -2,7 +2,7 @@ import logging
 from typing import Any, Dict, Iterator, Optional
 
 from lastfm_export.clients.http import HttpClient
-from lastfm_export.errors import HttpRequestError
+from lastfm_export.errors import HttpRequestError, LastFMRecentTracksAccessError
 from lastfm_export.models import Scrobble
 
 logger = logging.getLogger(__name__)
@@ -127,6 +127,13 @@ class LastFMClient:
         try:
             return self.http.get_json(self.base_url, params=params)
         except HttpRequestError as e:
+            if e.status_code == 403 and e.payload and e.payload.get("error") == 17:
+                raise LastFMRecentTracksAccessError(
+                    "Last.fm denied access to this account's recent listening history. "
+                    "Check that 'Hide recent listening information' is disabled "
+                    "in your Last.fm privacy settings."
+                ) from e
+
             # Add contextual info for debugging without changing exception shape.
             logger.error("Last.fm request failed: %s", e)
             raise
