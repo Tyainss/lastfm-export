@@ -3,6 +3,7 @@ from typing import Any, Dict, List
 import pytest
 
 from lastfm_export.clients.lastfm import LastFMClient
+from lastfm_export.errors import HttpRequestError, LastFMRecentTracksAccessError
 from lastfm_export.models import Scrobble
 
 
@@ -16,6 +17,14 @@ class _FakeHttp:
         if not self._pages:
             raise AssertionError("No more fake pages configured")
         return self._pages.pop(0)
+
+
+class _FailingHttp:
+    def __init__(self, error: HttpRequestError) -> None:
+        self._error = error
+
+    def get_json(self, url: str, *, params=None, headers=None) -> Dict[str, Any]:
+        raise self._error
 
 
 def test_iter_recent_tracks_skips_nowplaying_and_parses_scrobbles():
@@ -160,3 +169,52 @@ def test_iter_recent_tracks_requires_positive_page_size():
 
     with pytest.raises(ValueError):
         list(client.iter_recent_tracks(page_size=0))
+
+
+def test_iter_recent_tracks_raises_access_error_when_listening_history_is_hidden():
+    http_error = HttpRequestError(
+        method="GET",
+        url="https://ws.audioscrobbler.com/2.0/",
+        status_code=403,
+        message="Non-success response",
+        payload={
+            "error": 17,
+            "message": "Login required",
+        },
+    )
+    client = LastFMClient(
+        api_key="k",
+        username="u",
+        user_agent="ua",
+        http=_FailingHttp(http_error),
+    )
+
+    with pytest.raises(
+        LastFMRecentTracksAccessError,
+        match="Hide recent listening information",
+    ):
+        list(client.iter_recent_tracks())
+
+
+def test_iter_recent_tracks_preserves_unrelated_http_error():
+    http_error = HttpRequestError(
+        method="GET",
+        url="https://ws.audioscrobbler.com/2.0/",
+        status_code=403,
+        message="Non-success response",
+        payload={
+            "error": 10,
+            "message": "Invalid API key",
+        },
+    )
+    client = LastFMClient(
+        api_key="k",
+        username="u",
+        user_agent="ua",
+        http=_FailingHttp(http_error),
+    )
+
+    with pytest.raises(HttpRequestError) as exc:
+        list(client.iter_recent_tracks())
+
+    assert exc.value is http_error

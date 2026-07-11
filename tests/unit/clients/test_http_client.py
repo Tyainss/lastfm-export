@@ -77,6 +77,29 @@ def test_get_json_raises_on_4xx_without_retry():
 
 
 @responses.activate
+def test_get_json_preserves_json_payload_on_non_success_response():
+    url = "https://example.com/api"
+    payload = {
+        "error": 17,
+        "message": "Login required",
+    }
+    responses.add(
+        responses.GET,
+        url,
+        status=403,
+        json=payload,
+    )
+
+    client = HttpClient(user_agent="tests", retry=RetryConfig(max_attempts=1))
+
+    with pytest.raises(HttpRequestError) as exc:
+        client.get_json(url)
+
+    assert exc.value.status_code == 403
+    assert exc.value.payload == payload
+
+
+@responses.activate
 def test_get_json_raises_on_invalid_json():
     url = "https://example.com/api"
     responses.add(
