@@ -15,7 +15,13 @@ def test_cli_enrich_spotify_reads_ndjson_and_writes_ndjson(monkeypatch, tmp_path
 
     in_path.write_text(
         json.dumps(
-            {"artist_name": "A", "track_name": "T", "album_name": None, "timestamp_unix": 1, "mbid": None}
+            {
+                "artist_name": "A",
+                "track_name": "T",
+                "album_name": None,
+                "timestamp_unix": 1,
+                "mbid": None,
+            }
         )
         + "\n",
         encoding="utf-8",
@@ -37,11 +43,24 @@ def test_cli_enrich_spotify_reads_ndjson_and_writes_ndjson(monkeypatch, tmp_path
     monkeypatch.setenv("SPOTIFY_CLIENT_ID", "id")
     monkeypatch.setenv("SPOTIFY_CLIENT_SECRET", "sec")
 
-    monkeypatch.setattr("lastfm_export.cli.commands_enrich.SpotifyClient", _FakeSpotifyClient)
+    monkeypatch.setattr(
+        "lastfm_export.cli.commands_enrich.SpotifyClient", _FakeSpotifyClient
+    )
 
     result = runner.invoke(
         app,
-        ["enrich", "spotify", "--in", str(in_path), "--out", str(out), "--in-format", "ndjson", "--out-format", "ndjson"],
+        [
+            "enrich",
+            "spotify",
+            "--in",
+            str(in_path),
+            "--out",
+            str(out),
+            "--in-format",
+            "ndjson",
+            "--out-format",
+            "ndjson",
+        ],
     )
     assert result.exit_code == 0
     assert out.exists()

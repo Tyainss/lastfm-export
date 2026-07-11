@@ -3,6 +3,7 @@ from pathlib import Path
 from typer.testing import CliRunner
 
 from lastfm_export.cli.app import app
+from lastfm_export.errors import LastFMRecentTracksAccessError
 from lastfm_export.models import Scrobble
 
 runner = CliRunner()
@@ -16,15 +17,33 @@ def test_cli_scrobbles_export_writes_ndjson(monkeypatch, tmp_path: Path):
             pass
 
     def fake_export_scrobbles(**kwargs):
-        yield Scrobble(artist_name="A", track_name="T", album_name=None, timestamp_unix=1)
+        yield Scrobble(
+            artist_name="A", track_name="T", album_name=None, timestamp_unix=1
+        )
 
     monkeypatch.setenv("LASTFM_API_KEY", "k")
     monkeypatch.setenv("LASTFM_USERNAME", "u")
 
-    monkeypatch.setattr("lastfm_export.cli.commands_scrobbles.LastFMClient", _FakeLastFMClient)
-    monkeypatch.setattr("lastfm_export.cli.commands_scrobbles.export_scrobbles", fake_export_scrobbles)
+    monkeypatch.setattr(
+        "lastfm_export.cli.commands_scrobbles.LastFMClient", _FakeLastFMClient
+    )
+    monkeypatch.setattr(
+        "lastfm_export.cli.commands_scrobbles.export_scrobbles", fake_export_scrobbles
+    )
 
-    result = runner.invoke(app, ["scrobbles", "export", "--out", str(out), "--format", "ndjson", "--resume", "off"])
+    result = runner.invoke(
+        app,
+        [
+            "scrobbles",
+            "export",
+            "--out",
+            str(out),
+            "--format",
+            "ndjson",
+            "--resume",
+            "off",
+        ],
+    )
     assert result.exit_code == 0
     assert out.exists()
     txt = out.read_text(encoding="utf-8").strip()
@@ -42,12 +61,18 @@ def test_cli_scrobbles_export_parses_date_only_window(monkeypatch, tmp_path: Pat
 
     def fake_export_scrobbles(**kwargs):
         captured.update(kwargs)
-        yield Scrobble(artist_name="A", track_name="T", album_name=None, timestamp_unix=1)
+        yield Scrobble(
+            artist_name="A", track_name="T", album_name=None, timestamp_unix=1
+        )
 
     monkeypatch.setenv("LASTFM_API_KEY", "k")
     monkeypatch.setenv("LASTFM_USERNAME", "u")
-    monkeypatch.setattr("lastfm_export.cli.commands_scrobbles.LastFMClient", _FakeLastFMClient)
-    monkeypatch.setattr("lastfm_export.cli.commands_scrobbles.export_scrobbles", fake_export_scrobbles)
+    monkeypatch.setattr(
+        "lastfm_export.cli.commands_scrobbles.LastFMClient", _FakeLastFMClient
+    )
+    monkeypatch.setattr(
+        "lastfm_export.cli.commands_scrobbles.export_scrobbles", fake_export_scrobbles
+    )
 
     # 1970-01-02 00:00:00 UTC -> 86400
     # 1970-01-02 end-of-day UTC -> 2*86400 - 1 = 172799
@@ -81,12 +106,18 @@ def test_cli_scrobbles_export_rejects_mixed_text_and_unix(monkeypatch, tmp_path:
             pass
 
     def fake_export_scrobbles(**kwargs):
-        yield Scrobble(artist_name="A", track_name="T", album_name=None, timestamp_unix=1)
+        yield Scrobble(
+            artist_name="A", track_name="T", album_name=None, timestamp_unix=1
+        )
 
     monkeypatch.setenv("LASTFM_API_KEY", "k")
     monkeypatch.setenv("LASTFM_USERNAME", "u")
-    monkeypatch.setattr("lastfm_export.cli.commands_scrobbles.LastFMClient", _FakeLastFMClient)
-    monkeypatch.setattr("lastfm_export.cli.commands_scrobbles.export_scrobbles", fake_export_scrobbles)
+    monkeypatch.setattr(
+        "lastfm_export.cli.commands_scrobbles.LastFMClient", _FakeLastFMClient
+    )
+    monkeypatch.setattr(
+        "lastfm_export.cli.commands_scrobbles.export_scrobbles", fake_export_scrobbles
+    )
 
     result = runner.invoke(
         app,
@@ -108,3 +139,51 @@ def test_cli_scrobbles_export_rejects_mixed_text_and_unix(monkeypatch, tmp_path:
     assert result.exit_code != 0
     assert result.exception is not None
     assert "either --from or --from-unix" in str(result.exception).lower()
+
+
+def test_cli_scrobbles_export_displays_hidden_listening_history_error(
+    monkeypatch,
+    tmp_path: Path,
+):
+    out = tmp_path / "scrobbles.ndjson"
+
+    class _FakeLastFMClient:
+        def __init__(self, *args, **kwargs) -> None:
+            pass
+
+    def fake_export_scrobbles(**kwargs):
+        raise LastFMRecentTracksAccessError(
+            "Last.fm denied access to this account's recent listening history. "
+            "Check that 'Hide recent listening information' is disabled "
+            "in your Last.fm privacy settings."
+        )
+        yield
+
+    monkeypatch.setenv("LASTFM_API_KEY", "k")
+    monkeypatch.setenv("LASTFM_USERNAME", "u")
+    monkeypatch.setattr(
+        "lastfm_export.cli.commands_scrobbles.LastFMClient",
+        _FakeLastFMClient,
+    )
+    monkeypatch.setattr(
+        "lastfm_export.cli.commands_scrobbles.export_scrobbles",
+        fake_export_scrobbles,
+    )
+
+    result = runner.invoke(
+        app,
+        [
+            "scrobbles",
+            "export",
+            "--out",
+            str(out),
+            "--format",
+            "ndjson",
+            "--resume",
+            "off",
+        ],
+    )
+
+    assert result.exit_code == 1
+    assert "Hide recent listening information" in result.output
+    assert "Wrote scrobbles" not in result.output

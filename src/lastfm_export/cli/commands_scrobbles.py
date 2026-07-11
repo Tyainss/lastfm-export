@@ -1,13 +1,17 @@
-
 from pathlib import Path
 from typing import Optional
 
 import typer
 
-from lastfm_export.clients.lastfm import LastFMClient
-from lastfm_export.errors import ConfigError
-from lastfm_export.cli._common import ensure_overwrite_allowed, get_env_or_value, infer_format, read_watermark
+from lastfm_export.cli._common import (
+    ensure_overwrite_allowed,
+    get_env_or_value,
+    infer_format,
+    read_watermark,
+)
 from lastfm_export.cli.dates import resolve_time_window
+from lastfm_export.clients.lastfm import LastFMClient
+from lastfm_export.errors import ConfigError, LastFMRecentTracksAccessError
 from lastfm_export.io.sinks import csv_sink, json_sink, ndjson_sink
 from lastfm_export.pipelines.lastfm_export import export_scrobbles
 
@@ -17,18 +21,38 @@ scrobbles_app = typer.Typer(no_args_is_help=True)
 @scrobbles_app.command("export")
 def export_cmd(
     out: Path = typer.Option(..., "--out", help="Output file path."),
-    format: Optional[str] = typer.Option(None, "--format", help="ndjson | json | csv (default: inferred from --out)."),
+    format: Optional[str] = typer.Option(
+        None, "--format", help="ndjson | json | csv (default: inferred from --out)."
+    ),
     overwrite: bool = typer.Option(False, "--overwrite", help="Overwrite output file."),
     resume: str = typer.Option("auto", "--resume", help="auto | off"),
-    from_text: Optional[str] = typer.Option(None, "--from", help="Start date/datetime (UTC). YYYY-MM-DD or YYYY-MM-DDTHH:MM:SS"),
-    to_text: Optional[str] = typer.Option(None, "--to", help="End date/datetime (UTC). YYYY-MM-DD or YYYY-MM-DDTHH:MM:SS"),
-    from_unix: Optional[int] = typer.Option(None, "--from-unix", help="Inclusive start timestamp (unix seconds, UTC)."),
-    to_unix: Optional[int] = typer.Option(None, "--to-unix", help="Inclusive end timestamp (unix seconds, UTC)."),
+    from_text: Optional[str] = typer.Option(
+        None,
+        "--from",
+        help="Start date/datetime (UTC). YYYY-MM-DD or YYYY-MM-DDTHH:MM:SS",
+    ),
+    to_text: Optional[str] = typer.Option(
+        None, "--to", help="End date/datetime (UTC). YYYY-MM-DD or YYYY-MM-DDTHH:MM:SS"
+    ),
+    from_unix: Optional[int] = typer.Option(
+        None, "--from-unix", help="Inclusive start timestamp (unix seconds, UTC)."
+    ),
+    to_unix: Optional[int] = typer.Option(
+        None, "--to-unix", help="Inclusive end timestamp (unix seconds, UTC)."
+    ),
     page_size: int = typer.Option(200, "--page-size", help="Last.fm page size."),
-    page_limit: Optional[int] = typer.Option(None, "--page-limit", help="Stop after this many pages."),
-    api_key: Optional[str] = typer.Option(None, "--api-key", help="Last.fm API key (default: env LASTFM_API_KEY)."),
-    username: Optional[str] = typer.Option(None, "--username", help="Last.fm username (default: env LASTFM_USERNAME)."),
-    user_agent: str = typer.Option("lastfm-export", "--user-agent", help="HTTP User-Agent header."),
+    page_limit: Optional[int] = typer.Option(
+        None, "--page-limit", help="Stop after this many pages."
+    ),
+    api_key: Optional[str] = typer.Option(
+        None, "--api-key", help="Last.fm API key (default: env LASTFM_API_KEY)."
+    ),
+    username: Optional[str] = typer.Option(
+        None, "--username", help="Last.fm username (default: env LASTFM_USERNAME)."
+    ),
+    user_agent: str = typer.Option(
+        "lastfm-export", "--user-agent", help="HTTP User-Agent header."
+    ),
 ) -> None:
     fmt = infer_format(out, format)
     ensure_overwrite_allowed(out=out, fmt=fmt, overwrite=overwrite)
@@ -47,7 +71,9 @@ def export_cmd(
         to_text=to_text,
     )
 
-    lastfm = LastFMClient(api_key=api_key_val, username=username_val, user_agent=user_agent)
+    lastfm = LastFMClient(
+        api_key=api_key_val, username=username_val, user_agent=user_agent
+    )
     scrobbles = export_scrobbles(
         lastfm=lastfm,
         from_unix=window.from_unix,
@@ -66,6 +92,10 @@ def export_cmd(
     else:
         raise ConfigError(f"Unsupported format: {fmt}")
 
-    sink((s.to_record() for s in scrobbles))
+    try:
+        sink((s.to_record() for s in scrobbles))
+    except LastFMRecentTracksAccessError as e:
+        typer.echo(f"Error: {e}", err=True)
+        raise typer.Exit(code=1) from e
 
     typer.echo(f"Wrote scrobbles to {out}")

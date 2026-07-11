@@ -10,6 +10,10 @@ class ConfigError(LastFMExportError):
     """Raised when configuration is invalid or missing."""
 
 
+class LastFMRecentTracksAccessError(LastFMExportError):
+    """Raised when Last.fm denies access to a user's recent listening history."""
+
+
 class RateLimitError(LastFMExportError):
     """Raised when the remote API rate-limits and we cannot recover."""
 

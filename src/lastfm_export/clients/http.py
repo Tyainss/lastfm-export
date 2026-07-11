@@ -60,7 +60,9 @@ class HttpClient:
         params: dict[str, Any] | None = None,
         headers: dict[str, str] | None = None,
     ) -> dict[str, Any]:
-        return self._request_json("POST", url, params=params, headers=headers, data=data)
+        return self._request_json(
+            "POST", url, params=params, headers=headers, data=data
+        )
 
     def _request_json(
         self,
@@ -90,13 +92,19 @@ class HttpClient:
 
                 # Rate limit handling
                 if resp.status_code == 429:
-                    retry_after = self._parse_retry_after(resp.headers.get("Retry-After"))
+                    retry_after = self._parse_retry_after(
+                        resp.headers.get("Retry-After")
+                    )
                     if retry_after is None:
                         retry_after = self._compute_backoff(attempt)
-                    retry_after = min(float(retry_after), float(self._retry.max_retry_after_secs))
+                    retry_after = min(
+                        float(retry_after), float(self._retry.max_retry_after_secs)
+                    )
 
                     if attempt >= self._retry.max_attempts:
-                        raise RateLimitError(f"Rate limited (429) and max attempts reached: {method} {url}")
+                        raise RateLimitError(
+                            f"Rate limited (429) and max attempts reached: {method} {url}"
+                        )
 
                     time.sleep(retry_after)
                     continue
@@ -110,6 +118,7 @@ class HttpClient:
                             status_code=resp.status_code,
                             message="Server error (5xx) after retries",
                             response_text=_safe_text(resp),
+                            payload=_safe_json_object(resp),
                         )
                     time.sleep(self._compute_backoff(attempt))
                     continue
@@ -122,6 +131,7 @@ class HttpClient:
                         status_code=resp.status_code,
                         message="Non-success response",
                         response_text=_safe_text(resp),
+                        payload=_safe_json_object(resp),
                     )
 
                 # Parse JSON
@@ -160,7 +170,9 @@ class HttpClient:
 
         # Should never hit
         if last_error is not None:
-            raise HttpRequestError(method=method, url=url, message="Request failed") from last_error
+            raise HttpRequestError(
+                method=method, url=url, message="Request failed"
+            ) from last_error
         raise HttpRequestError(method=method, url=url, message="Request failed")
 
     def _compute_backoff(self, attempt: int) -> float:
@@ -191,3 +203,14 @@ def _safe_text(resp: requests.Response) -> str | None:
         return txt[:2000]  # cap: keep error objects small
     except Exception:
         return None
+
+
+def _safe_json_object(resp: requests.Response) -> dict[str, Any] | None:
+    try:
+        payload = resp.json()
+    except ValueError:
+        return None
+
+    if isinstance(payload, dict):
+        return payload
+    return None

@@ -16,6 +16,7 @@ def read_ndjson_records(path: Path) -> Iterator[dict[str, Any]]:
                 continue
             yield json.loads(line)
 
+
 def read_json_records(path: Path) -> Iterator[dict[str, Any]]:
     """
     Read a JSON file containing a list of objects.

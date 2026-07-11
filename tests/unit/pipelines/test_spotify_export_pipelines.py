@@ -37,14 +37,22 @@ def test_enrich_scrobbles_dedupes_lookups_and_reuses_result():
         spotify_track_url="u1",
         popularity=10,
     )
-    spotify.set_response(artist_name="Artist", track_name="Track", enrichment=enrichment)
+    spotify.set_response(
+        artist_name="Artist", track_name="Track", enrichment=enrichment
+    )
 
     scrobbles = [
-        Scrobble(artist_name="Artist", track_name="Track", album_name=None, timestamp_unix=1),
-        Scrobble(artist_name="Artist", track_name="Track", album_name=None, timestamp_unix=2),
+        Scrobble(
+            artist_name="Artist", track_name="Track", album_name=None, timestamp_unix=1
+        ),
+        Scrobble(
+            artist_name="Artist", track_name="Track", album_name=None, timestamp_unix=2
+        ),
     ]
 
-    out = list(enrich_scrobbles_with_spotify(spotify=spotify, scrobbles=scrobbles, dedupe=True))
+    out = list(
+        enrich_scrobbles_with_spotify(spotify=spotify, scrobbles=scrobbles, dedupe=True)
+    )
 
     assert len(out) == 2
     assert all(isinstance(x, EnrichedScrobble) for x in out)
@@ -58,11 +66,23 @@ def test_enrich_scrobbles_dedupes_misses_too():
     spotify.set_response(artist_name="Artist", track_name="Missing", enrichment=None)
 
     scrobbles = [
-        Scrobble(artist_name="Artist", track_name="Missing", album_name=None, timestamp_unix=1),
-        Scrobble(artist_name="Artist", track_name="Missing", album_name=None, timestamp_unix=2),
+        Scrobble(
+            artist_name="Artist",
+            track_name="Missing",
+            album_name=None,
+            timestamp_unix=1,
+        ),
+        Scrobble(
+            artist_name="Artist",
+            track_name="Missing",
+            album_name=None,
+            timestamp_unix=2,
+        ),
     ]
 
-    out = list(enrich_scrobbles_with_spotify(spotify=spotify, scrobbles=scrobbles, dedupe=True))
+    out = list(
+        enrich_scrobbles_with_spotify(spotify=spotify, scrobbles=scrobbles, dedupe=True)
+    )
 
     assert len(out) == 2
     assert spotify.calls == [("Artist", "Missing")]
@@ -79,14 +99,24 @@ def test_enrich_scrobbles_no_dedupe_calls_every_time():
         spotify_track_url=None,
         popularity=None,
     )
-    spotify.set_response(artist_name="Artist", track_name="Track", enrichment=enrichment)
+    spotify.set_response(
+        artist_name="Artist", track_name="Track", enrichment=enrichment
+    )
 
     scrobbles = [
-        Scrobble(artist_name="Artist", track_name="Track", album_name=None, timestamp_unix=1),
-        Scrobble(artist_name="Artist", track_name="Track", album_name=None, timestamp_unix=2),
+        Scrobble(
+            artist_name="Artist", track_name="Track", album_name=None, timestamp_unix=1
+        ),
+        Scrobble(
+            artist_name="Artist", track_name="Track", album_name=None, timestamp_unix=2
+        ),
     ]
 
-    out = list(enrich_scrobbles_with_spotify(spotify=spotify, scrobbles=scrobbles, dedupe=False))
+    out = list(
+        enrich_scrobbles_with_spotify(
+            spotify=spotify, scrobbles=scrobbles, dedupe=False
+        )
+    )
 
     assert len(out) == 2
     assert spotify.calls == [("Artist", "Track"), ("Artist", "Track")]
@@ -103,14 +133,28 @@ def test_enrich_scrobbles_normalizes_cache_keys():
         spotify_track_url=None,
         popularity=None,
     )
-    spotify.set_response(artist_name="  ARTIST  ", track_name="Track", enrichment=enrichment)
+    spotify.set_response(
+        artist_name="  ARTIST  ", track_name="Track", enrichment=enrichment
+    )
 
     scrobbles = [
-        Scrobble(artist_name="  ARTIST  ", track_name="Track", album_name=None, timestamp_unix=1),
-        Scrobble(artist_name="artist", track_name="  track  ", album_name=None, timestamp_unix=2),
+        Scrobble(
+            artist_name="  ARTIST  ",
+            track_name="Track",
+            album_name=None,
+            timestamp_unix=1,
+        ),
+        Scrobble(
+            artist_name="artist",
+            track_name="  track  ",
+            album_name=None,
+            timestamp_unix=2,
+        ),
     ]
 
-    out = list(enrich_scrobbles_with_spotify(spotify=spotify, scrobbles=scrobbles, dedupe=True))
+    out = list(
+        enrich_scrobbles_with_spotify(spotify=spotify, scrobbles=scrobbles, dedupe=True)
+    )
 
     assert len(out) == 2
     assert spotify.calls == [("  ARTIST  ", "Track")]

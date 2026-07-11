@@ -43,7 +43,9 @@ def json_sink(path: Path, *, overwrite: bool = True, indent: Optional[int] = 2) 
     return _write
 
 
-def csv_sink(path: Path, *, overwrite: bool = True, fieldnames: Optional[list[str]] = None) -> Sink:
+def csv_sink(
+    path: Path, *, overwrite: bool = True, fieldnames: Optional[list[str]] = None
+) -> Sink:
     """
     Write records to CSV.
 

@@ -19,7 +19,9 @@ def test_get_json_retries_on_429_and_honors_retry_after(monkeypatch):
             return (429, {"Retry-After": "0"}, "rate limited")
         return (200, {"Content-Type": "application/json"}, '{"ok": true}')
 
-    responses.add_callback(responses.GET, url, callback=_callback, content_type="application/json")
+    responses.add_callback(
+        responses.GET, url, callback=_callback, content_type="application/json"
+    )
 
     slept = {"secs": []}
 
@@ -30,7 +32,9 @@ def test_get_json_retries_on_429_and_honors_retry_after(monkeypatch):
 
     client = HttpClient(
         user_agent="tests",
-        retry=RetryConfig(max_attempts=3, backoff_base_secs=0.01, backoff_max_secs=0.02),
+        retry=RetryConfig(
+            max_attempts=3, backoff_base_secs=0.01, backoff_max_secs=0.02
+        ),
     )
     out = client.get_json(url)
 
@@ -49,7 +53,9 @@ def test_get_json_retries_on_5xx_then_succeeds(monkeypatch):
 
     client = HttpClient(
         user_agent="tests",
-        retry=RetryConfig(max_attempts=3, backoff_base_secs=0.01, backoff_max_secs=0.02),
+        retry=RetryConfig(
+            max_attempts=3, backoff_base_secs=0.01, backoff_max_secs=0.02
+        ),
     )
     out = client.get_json(url)
 
@@ -68,6 +74,29 @@ def test_get_json_raises_on_4xx_without_retry():
 
     assert exc.value.status_code == 404
     assert len(responses.calls) == 1
+
+
+@responses.activate
+def test_get_json_preserves_json_payload_on_non_success_response():
+    url = "https://example.com/api"
+    payload = {
+        "error": 17,
+        "message": "Login required",
+    }
+    responses.add(
+        responses.GET,
+        url,
+        status=403,
+        json=payload,
+    )
+
+    client = HttpClient(user_agent="tests", retry=RetryConfig(max_attempts=1))
+
+    with pytest.raises(HttpRequestError) as exc:
+        client.get_json(url)
+
+    assert exc.value.status_code == 403
+    assert exc.value.payload == payload
 
 
 @responses.activate
@@ -107,7 +136,9 @@ def test_get_json_retries_on_timeout_then_succeeds(monkeypatch):
     client = HttpClient(
         user_agent="tests",
         session=session,
-        retry=RetryConfig(max_attempts=2, backoff_base_secs=0.01, backoff_max_secs=0.02),
+        retry=RetryConfig(
+            max_attempts=2, backoff_base_secs=0.01, backoff_max_secs=0.02
+        ),
     )
     out = client.get_json(url)
 
@@ -123,7 +154,9 @@ def test_get_json_raises_rate_limit_error_when_429_persists(monkeypatch):
 
     def fake_request(*args, **kwargs):
         call_count["n"] += 1
-        return _FakeResponse(status_code=429, headers={"Retry-After": "0"}, text="rate limited")
+        return _FakeResponse(
+            status_code=429, headers={"Retry-After": "0"}, text="rate limited"
+        )
 
     monkeypatch.setattr(session, "request", fake_request)
     monkeypatch.setattr(time, "sleep", lambda *_: None)
@@ -131,7 +164,9 @@ def test_get_json_raises_rate_limit_error_when_429_persists(monkeypatch):
     client = HttpClient(
         user_agent="tests",
         session=session,
-        retry=RetryConfig(max_attempts=2, backoff_base_secs=0.01, backoff_max_secs=0.02),
+        retry=RetryConfig(
+            max_attempts=2, backoff_base_secs=0.01, backoff_max_secs=0.02
+        ),
     )
 
     with pytest.raises(RateLimitError):

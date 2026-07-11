@@ -1,10 +1,13 @@
-
 import json
 from pathlib import Path
 
 import pytest
 
-from lastfm_export.io.readers import read_csv_records, read_json_records, read_ndjson_records
+from lastfm_export.io.readers import (
+    read_csv_records,
+    read_json_records,
+    read_ndjson_records,
+)
 
 
 def test_read_ndjson_records_reads_objects(tmp_path: Path):

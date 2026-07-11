@@ -2,6 +2,12 @@
 
 ## [Unreleased]
 
+### Fixed
+- Added actionable CLI guidance when Last.fm denies access to hidden recent listening history.
+
+### Changed
+- Documented the Last.fm privacy setting required to export scrobbles.
+
 ## [0.1.1] - 2026-03-04
 ### Changed
 - Release workflow now uses a GitHub Actions `pypi` environment approval gate for Trusted Publishing.
