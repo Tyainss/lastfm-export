@@ -55,7 +55,6 @@ def test_export_scrobbles_filters_by_watermark():
     assert [s.track_name for s in out] == ["T3"]
 
 
-
 def test_export_scrobbles_stops_early_when_reaching_watermark():
     seen: list[int] = []
 

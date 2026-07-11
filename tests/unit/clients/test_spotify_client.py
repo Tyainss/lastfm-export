@@ -36,19 +36,28 @@ def test_search_track_first_sets_bearer_header(monkeypatch):
             {
                 "tracks": {
                     "items": [
-                        {"id": "t1", "artists": [{"id": "a1"}], "album": {"id": "al1"}, "external_urls": {"spotify": "u"}}
+                        {
+                            "id": "t1",
+                            "artists": [{"id": "a1"}],
+                            "album": {"id": "al1"},
+                            "external_urls": {"spotify": "u"},
+                        }
                     ]
                 }
             }
         ]
     )
 
-    client = SpotifyClient(client_id="id", client_secret="sec", user_agent="ua", http=http)
+    client = SpotifyClient(
+        client_id="id", client_secret="sec", user_agent="ua", http=http
+    )
 
     monkeypatch.setattr(
         client._token_session,
         "post",
-        lambda *args, **kwargs: _FakeTokenResponse({"access_token": "TOKEN", "expires_in": 3600}),
+        lambda *args, **kwargs: _FakeTokenResponse(
+            {"access_token": "TOKEN", "expires_in": 3600}
+        ),
     )
 
     item = client.search_track_first(track_name="Song", artist_name="Artist")
@@ -66,7 +75,9 @@ def test_token_is_cached(monkeypatch):
             {"tracks": {"items": [{"id": "t2"}]}},
         ]
     )
-    client = SpotifyClient(client_id="id", client_secret="sec", user_agent="ua", http=http)
+    client = SpotifyClient(
+        client_id="id", client_secret="sec", user_agent="ua", http=http
+    )
 
     post_calls = {"n": 0}
 
@@ -92,7 +103,9 @@ def test_build_track_enrichment_maps_fields(monkeypatch):
                             "id": "track_id",
                             "artists": [{"id": "artist_id"}],
                             "album": {"id": "album_id"},
-                            "external_urls": {"spotify": "https://open.spotify.com/track/track_id"},
+                            "external_urls": {
+                                "spotify": "https://open.spotify.com/track/track_id"
+                            },
                             "popularity": 42,
                         }
                     ]
@@ -101,11 +114,15 @@ def test_build_track_enrichment_maps_fields(monkeypatch):
         ]
     )
 
-    client = SpotifyClient(client_id="id", client_secret="sec", user_agent="ua", http=http)
+    client = SpotifyClient(
+        client_id="id", client_secret="sec", user_agent="ua", http=http
+    )
     monkeypatch.setattr(
         client._token_session,
         "post",
-        lambda *args, **kwargs: _FakeTokenResponse({"access_token": "TOKEN", "expires_in": 3600}),
+        lambda *args, **kwargs: _FakeTokenResponse(
+            {"access_token": "TOKEN", "expires_in": 3600}
+        ),
     )
 
     enr = client.build_track_enrichment(track_name="Song", artist_name="Artist")

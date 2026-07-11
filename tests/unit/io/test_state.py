@@ -1,4 +1,3 @@
-
 import json
 from pathlib import Path
 
@@ -18,7 +17,9 @@ def test_read_watermark_from_ndjson_returns_max_timestamp(tmp_path: Path):
 
 def test_read_watermark_from_json_returns_max_timestamp(tmp_path: Path):
     path = tmp_path / "out.json"
-    path.write_text(json.dumps([{"timestamp_unix": 5}, {"timestamp_unix": 1}]), encoding="utf-8")
+    path.write_text(
+        json.dumps([{"timestamp_unix": 5}, {"timestamp_unix": 1}]), encoding="utf-8"
+    )
 
     assert read_watermark_from_json(path) == 5
 

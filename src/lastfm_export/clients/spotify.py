@@ -48,14 +48,18 @@ class SpotifyClient:
                 retry=RetryConfig(max_retry_after_secs=int(max_retry_after_secs)),
             )
 
-    def search_track_first(self, *, track_name: str, artist_name: str) -> Optional[Dict[str, Any]]:
+    def search_track_first(
+        self, *, track_name: str, artist_name: str
+    ) -> Optional[Dict[str, Any]]:
         token = self._ensure_token()
 
         q = f'track:"{track_name}" artist:"{self._clean_artist_name(artist_name)}"'
         params = {"q": q, "type": "track", "limit": 1}
 
         headers = {"Authorization": f"Bearer {token}"}
-        payload = self.http.get_json(f"{self.base_url}/search", params=params, headers=headers)
+        payload = self.http.get_json(
+            f"{self.base_url}/search", params=params, headers=headers
+        )
 
         tracks = payload.get("tracks", {})
         items = tracks.get("items", [])
@@ -124,14 +128,18 @@ class SpotifyClient:
         return self._token
 
     def _fetch_token(self) -> Tuple[str, int]:
-        auth_b64 = base64.b64encode(f"{self.client_id}:{self.client_secret}".encode("utf-8")).decode("utf-8")
+        auth_b64 = base64.b64encode(
+            f"{self.client_id}:{self.client_secret}".encode("utf-8")
+        ).decode("utf-8")
         headers = {
             "Authorization": f"Basic {auth_b64}",
             "Content-Type": "application/x-www-form-urlencoded",
         }
         data = {"grant_type": "client_credentials"}
 
-        resp = self._token_session.post(self.token_url, headers=headers, data=data, timeout=30)
+        resp = self._token_session.post(
+            self.token_url, headers=headers, data=data, timeout=30
+        )
         resp.raise_for_status()
         payload = resp.json()
 
@@ -139,7 +147,9 @@ class SpotifyClient:
         expires_in = payload.get("expires_in")
 
         if not token or not expires_in:
-            raise RuntimeError("Spotify token response missing access_token or expires_in")
+            raise RuntimeError(
+                "Spotify token response missing access_token or expires_in"
+            )
 
         return str(token), int(expires_in)
 

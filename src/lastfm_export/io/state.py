@@ -1,8 +1,11 @@
-
 from pathlib import Path
 from typing import Any, Callable, Iterator, Optional
 
-from lastfm_export.io.readers import read_csv_records, read_json_records, read_ndjson_records
+from lastfm_export.io.readers import (
+    read_csv_records,
+    read_json_records,
+    read_ndjson_records,
+)
 
 
 def read_watermark_from_ndjson(path: Path) -> Optional[int]:
@@ -46,7 +49,7 @@ def _read_watermark(
             val = int(ts)
         except (TypeError, ValueError):
             continue
-        
+
         if max_ts is None or val > max_ts:
             max_ts = val
 

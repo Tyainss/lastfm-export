@@ -45,7 +45,11 @@ def resolve_time_window(
     resolved_from = from_unix if from_unix is not None else _parse_from_text(from_text)
     resolved_to = to_unix if to_unix is not None else _parse_to_text(to_text)
 
-    if resolved_from is not None and resolved_to is not None and resolved_from > resolved_to:
+    if (
+        resolved_from is not None
+        and resolved_to is not None
+        and resolved_from > resolved_to
+    ):
         raise ConfigError("Invalid time window: from is greater than to.")
 
     return TimeWindow(from_unix=resolved_from, to_unix_inclusive=resolved_to)
@@ -73,7 +77,9 @@ def _parse_to_text(value: Optional[str]) -> Optional[int]:
     dt = _parse_date_or_datetime(value)
     if isinstance(dt, date) and not isinstance(dt, datetime):
         # date-only "to" means end-of-day UTC (implemented as next-day exclusive then -1 second)
-        next_day = datetime(dt.year, dt.month, dt.day, 0, 0, 0, tzinfo=UTC) + timedelta(days=1)
+        next_day = datetime(dt.year, dt.month, dt.day, 0, 0, 0, tzinfo=UTC) + timedelta(
+            days=1
+        )
         return int(next_day.timestamp()) - 1
     dt_utc = _as_utc_datetime(dt)
     return int(dt_utc.timestamp())
@@ -88,7 +94,9 @@ def _parse_date_or_datetime(value: str) -> date | datetime:
         try:
             return datetime.fromisoformat(raw)
         except ValueError as e:
-            raise ConfigError(f"Invalid datetime format for '{value}'. Use YYYY-MM-DD or YYYY-MM-DDTHH:MM:SS.") from e
+            raise ConfigError(
+                f"Invalid datetime format for '{value}'. Use YYYY-MM-DD or YYYY-MM-DDTHH:MM:SS."
+            ) from e
 
     try:
         return date.fromisoformat(raw)

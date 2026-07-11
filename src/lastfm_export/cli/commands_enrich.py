@@ -1,4 +1,3 @@
-
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Callable, Dict, Iterable, Iterator, Optional, Tuple
@@ -7,14 +6,23 @@ import typer
 
 from lastfm_export.clients.spotify import SpotifyClient
 from lastfm_export.errors import ConfigError
-from lastfm_export.cli._common import ensure_overwrite_allowed, get_env_or_value, infer_format
-from lastfm_export.io.readers import read_csv_records, read_json_records, read_ndjson_records
+from lastfm_export.cli._common import (
+    ensure_overwrite_allowed,
+    get_env_or_value,
+    infer_format,
+)
+from lastfm_export.io.readers import (
+    read_csv_records,
+    read_json_records,
+    read_ndjson_records,
+)
 from lastfm_export.io.sinks import csv_sink, json_sink, ndjson_sink
 from lastfm_export.models import Scrobble, SpotifyTrackEnrichment
 
 enrich_app = typer.Typer(no_args_is_help=True)
 
 Record = Dict[str, Any]
+
 
 def _norm_key(value: str) -> str:
     return " ".join(value.split()).strip().lower()
@@ -38,6 +46,7 @@ def _record_to_scrobble(rec: Record) -> Scrobble:
         mbid=rec.get("mbid"),
         raw=rec,
     )
+
 
 def _spotify_from_record(value: Any) -> Optional[SpotifyTrackEnrichment]:
     if value is None:
@@ -67,7 +76,9 @@ def _load_records(in_path: Path, fmt: str) -> Iterable[Record]:
     raise ConfigError(f"Unsupported input format: {fmt}")
 
 
-def _resolve_sink(out: Path, fmt: str, *, overwrite: bool) -> Callable[[Iterable[Record]], None]:
+def _resolve_sink(
+    out: Path, fmt: str, *, overwrite: bool
+) -> Callable[[Iterable[Record]], None]:
     if fmt == "ndjson":
         return ndjson_sink(out, overwrite=overwrite)
     if fmt == "json":
@@ -140,21 +151,36 @@ def _iter_enriched_records(
         yield out_rec
 
 
-
 @enrich_app.command("spotify")
 def enrich_spotify_cmd(
-    in_path: Path = typer.Option(..., "--in", help="Input file path containing scrobbles."),
-    out: Path = typer.Option(..., "--out", help="Output file path."),
-    in_format: Optional[str] = typer.Option(None, "--in-format", help="ndjson | json | csv (default: inferred)."),
-    out_format: Optional[str] = typer.Option(None, "--out-format", help="ndjson | json | csv (default: inferred)."),
-    overwrite: bool = typer.Option(False, "--overwrite", help="Overwrite output file."),
-    dedupe: bool = typer.Option(True, "--dedupe/--no-dedupe", help="Cache lookups by (artist, track)."),
-    only_missing: bool = typer.Option(False, "--only-missing", help="Skip records that already have spotify data."),
-    client_id: Optional[str] = typer.Option(None, "--client-id", help="Spotify client id (default: env SPOTIFY_CLIENT_ID)."),
-    client_secret: Optional[str] = typer.Option(
-        None, "--client-secret", help="Spotify client secret (default: env SPOTIFY_CLIENT_SECRET)."
+    in_path: Path = typer.Option(
+        ..., "--in", help="Input file path containing scrobbles."
     ),
-    user_agent: str = typer.Option("lastfm-export", "--user-agent", help="HTTP User-Agent header."),
+    out: Path = typer.Option(..., "--out", help="Output file path."),
+    in_format: Optional[str] = typer.Option(
+        None, "--in-format", help="ndjson | json | csv (default: inferred)."
+    ),
+    out_format: Optional[str] = typer.Option(
+        None, "--out-format", help="ndjson | json | csv (default: inferred)."
+    ),
+    overwrite: bool = typer.Option(False, "--overwrite", help="Overwrite output file."),
+    dedupe: bool = typer.Option(
+        True, "--dedupe/--no-dedupe", help="Cache lookups by (artist, track)."
+    ),
+    only_missing: bool = typer.Option(
+        False, "--only-missing", help="Skip records that already have spotify data."
+    ),
+    client_id: Optional[str] = typer.Option(
+        None, "--client-id", help="Spotify client id (default: env SPOTIFY_CLIENT_ID)."
+    ),
+    client_secret: Optional[str] = typer.Option(
+        None,
+        "--client-secret",
+        help="Spotify client secret (default: env SPOTIFY_CLIENT_SECRET).",
+    ),
+    user_agent: str = typer.Option(
+        "lastfm-export", "--user-agent", help="HTTP User-Agent header."
+    ),
 ) -> None:
     in_fmt = infer_format(in_path, in_format)
     out_fmt = infer_format(out, out_format)
