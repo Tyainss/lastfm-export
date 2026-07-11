@@ -45,6 +45,11 @@ export LASTFM_API_KEY="..."
 export LASTFM_USERNAME="..."
 ```
 
+> **Last.fm privacy setting:** Exporting scrobbles requires your recent listening
+> information to be available through the Last.fm API. Make sure **“Hide recent
+> listening information”** is disabled in your Last.fm privacy settings. This
+> setting controls whether your recent listening information is publicly visible.
+
 ### Spotify (optional)
 
 Set these environment variables:
