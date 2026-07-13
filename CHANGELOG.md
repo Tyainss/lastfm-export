@@ -2,6 +2,8 @@
 
 ## [Unreleased]
 
+
+## [0.1.2] - 2026-07-13
 ### Fixed
 - Added actionable CLI guidance when Last.fm denies access to hidden recent listening history.
 
