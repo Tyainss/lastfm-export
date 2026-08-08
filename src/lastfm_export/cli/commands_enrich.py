@@ -38,13 +38,15 @@ def _record_to_scrobble(rec: Record) -> Scrobble:
     if not artist_name or not track_name:
         raise ValueError("Input record missing artist_name or track_name")
 
+    raw = rec.get("raw")
+
     return Scrobble(
         artist_name=artist_name,
         track_name=track_name,
         album_name=rec.get("album_name"),
         timestamp_unix=int(ts),
         mbid=rec.get("mbid"),
-        raw=rec,
+        raw=raw if isinstance(raw, dict) else None,
     )
 
 
@@ -56,13 +58,14 @@ def _spotify_from_record(value: Any) -> Optional[SpotifyTrackEnrichment]:
     track_id = value.get("spotify_track_id")
     if not track_id:
         return None
+    raw = value.get("raw")
     return SpotifyTrackEnrichment(
         spotify_track_id=str(track_id),
         spotify_artist_id=value.get("spotify_artist_id"),
         spotify_album_id=value.get("spotify_album_id"),
         spotify_track_url=value.get("spotify_track_url"),
         popularity=value.get("popularity"),
-        raw=value,
+        raw=raw if isinstance(raw, dict) else None,
     )
 
 
@@ -113,6 +116,7 @@ def _iter_enriched_records(
     spotify: SpotifyClient,
     dedupe: bool,
     only_missing: bool,
+    include_raw: bool,
     stats: SpotifyEnrichStats,
 ) -> Iterator[Record]:
     cache: Dict[Tuple[str, str], Optional[SpotifyTrackEnrichment]] = {}
@@ -147,7 +151,11 @@ def _iter_enriched_records(
                 cache[key] = enrichment
 
         out_rec = dict(rec)
-        out_rec["spotify"] = None if enrichment is None else enrichment.to_record()
+        out_rec["spotify"] = (
+            None
+            if enrichment is None
+            else enrichment.to_record(include_raw=include_raw)
+        )
         yield out_rec
 
 
@@ -169,6 +177,11 @@ def enrich_spotify_cmd(
     ),
     only_missing: bool = typer.Option(
         False, "--only-missing", help="Skip records that already have spotify data."
+    ),
+    include_raw: bool = typer.Option(
+        False,
+        "--include-raw",
+        help="Include the original Spotify track payload in new enrichment data.",
     ),
     client_id: Optional[str] = typer.Option(
         None, "--client-id", help="Spotify client id (default: env SPOTIFY_CLIENT_ID)."
@@ -200,6 +213,7 @@ def enrich_spotify_cmd(
         spotify=spotify,
         dedupe=dedupe,
         only_missing=only_missing,
+        include_raw=include_raw,
         stats=stats,
     )
     sink(out_records)

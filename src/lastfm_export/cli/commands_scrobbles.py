@@ -25,6 +25,11 @@ def export_cmd(
         None, "--format", help="ndjson | json | csv (default: inferred from --out)."
     ),
     overwrite: bool = typer.Option(False, "--overwrite", help="Overwrite output file."),
+    include_raw: bool = typer.Option(
+        False,
+        "--include-raw",
+        help="Include the original Last.fm track payload in each exported record.",
+    ),
     resume: str = typer.Option("auto", "--resume", help="auto | off"),
     from_text: Optional[str] = typer.Option(
         None,
@@ -93,7 +98,7 @@ def export_cmd(
         raise ConfigError(f"Unsupported format: {fmt}")
 
     try:
-        sink((s.to_record() for s in scrobbles))
+        sink((s.to_record(include_raw=include_raw) for s in scrobbles))
     except LastFMRecentTracksAccessError as e:
         typer.echo(f"Error: {e}", err=True)
         raise typer.Exit(code=1) from e
