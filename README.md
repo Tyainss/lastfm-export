@@ -162,6 +162,23 @@ Supported formats depend on command:
 
 Tip: For large histories, use NDJSON to avoid loading everything into memory.
 
+### Raw source payloads
+
+Exports use normalized fields by default. To also preserve the original source payload, use `--include-raw`:
+
+```bash
+lastfm-export scrobbles export \
+  --out scrobbles.ndjson \
+  --include-raw
+
+lastfm-export enrich spotify \
+  --in scrobbles.ndjson \
+  --out scrobbles_enriched.ndjson \
+  --include-raw
+```
+
+For Python usage, pass `include_raw=True` to `to_record()`. Raw payloads remain nested under the source they belong to.
+
 ---
 
 ## Development

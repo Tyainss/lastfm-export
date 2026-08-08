@@ -1,6 +1,8 @@
 # Changelog
 
 ## [Unreleased]
+### Added
+- Added optional raw source payloads to Last.fm exports and Spotify enrichment via `--include-raw` and `to_record(include_raw=True)`.
 
 
 ## [0.1.2] - 2026-07-13
