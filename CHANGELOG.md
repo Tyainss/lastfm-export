@@ -1,6 +1,8 @@
 # Changelog
 
 ## [Unreleased]
+### Added
+- Added optional per-track Last.fm and Spotify source payloads via `--include-raw` and `to_record(include_raw=True)`.
 
 
 ## [0.1.2] - 2026-07-13
