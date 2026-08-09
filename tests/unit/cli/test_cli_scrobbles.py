@@ -19,7 +19,11 @@ def test_cli_scrobbles_export_writes_ndjson(monkeypatch, tmp_path: Path):
 
     def fake_export_scrobbles(**kwargs):
         yield Scrobble(
-            artist_name="A", track_name="T", album_name=None, timestamp_unix=1
+            artist_name="A",
+            track_name="T",
+            album_name=None,
+            timestamp_unix=1,
+            raw={"name": "T"},
         )
 
     monkeypatch.setenv("LASTFM_API_KEY", "k")
@@ -47,8 +51,9 @@ def test_cli_scrobbles_export_writes_ndjson(monkeypatch, tmp_path: Path):
     )
     assert result.exit_code == 0
     assert out.exists()
-    txt = out.read_text(encoding="utf-8").strip()
-    assert '"track_name": "T"' in txt
+    record = json.loads(out.read_text(encoding="utf-8"))
+    assert record["track_name"] == "T"
+    assert "raw" not in record
 
 
 def test_cli_scrobbles_export_can_include_raw(monkeypatch, tmp_path: Path):

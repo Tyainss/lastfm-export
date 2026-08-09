@@ -12,7 +12,7 @@ class Scrobble:
       - For "now playing" items, Last.fm may not provide a timestamp; those should be skipped upstream.
 
     raw:
-      - Original track payload returned by Last.fm, when available.
+      - Original per-track payload returned by Last.fm, when available.
     """
 
     artist_name: str
@@ -40,8 +40,7 @@ class SpotifyTrackEnrichment:
     """
     Minimal Spotify metadata for a track lookup.
 
-    We keep it intentionally small for v0.1.0 (easy to evolve without breaking users).
-    `raw` contains the original Spotify track payload when available.
+    `raw` contains the original per-track payload returned by Spotify, when available.
     """
 
     spotify_track_id: str

@@ -164,7 +164,7 @@ Tip: For large histories, use NDJSON to avoid loading everything into memory.
 
 ### Raw source payloads
 
-Exports use normalized fields by default. To also preserve the original source payload, use `--include-raw`:
+Normalized output remains the default. To also preserve the per-track source payload, use `--include-raw`:
 
 ```bash
 lastfm-export scrobbles export \
@@ -177,7 +177,9 @@ lastfm-export enrich spotify \
   --include-raw
 ```
 
-For Python usage, pass `include_raw=True` to `to_record()`. Raw payloads remain nested under the source they belong to.
+For Python usage, pass `include_raw=True` to `to_record()`. Last.fm payloads are stored in `raw`, while Spotify payloads are stored in `spotify.raw`. In CSV output, nested payloads are JSON-encoded in cells.
+
+Raw payload shapes are controlled by the upstream APIs and may change independently of the normalized export schema.
 
 ---
 

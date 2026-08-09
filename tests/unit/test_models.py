@@ -30,7 +30,7 @@ def test_scrobble_to_record_can_include_raw():
         raw=raw,
     )
 
-    assert scrobble.to_record(include_raw=True)["raw"] is raw
+    assert scrobble.to_record(include_raw=True)["raw"] == raw
 
 
 def test_enriched_scrobble_to_record_propagates_include_raw():
@@ -55,5 +55,5 @@ def test_enriched_scrobble_to_record_propagates_include_raw():
 
     record = enriched.to_record(include_raw=True)
 
-    assert record["raw"] is lastfm_raw
-    assert record["spotify"]["raw"] is spotify_raw
+    assert record["raw"] == lastfm_raw
+    assert record["spotify"]["raw"] == spotify_raw
