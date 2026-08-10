@@ -2,6 +2,22 @@
 
 ## [Unreleased]
 
+### Added
+
+- Added verified daily scrobble exports as the default, with an integrity report beside the output file.
+- Added `--integrity-policy strict|warn` for verified exports.
+- Added `--acquisition-mode fast` for quick, unverified exports.
+
+### Changed
+
+- Exports now freeze the end time when they start and use the account registration date when no start date is given.
+- NDJSON, JSON, and CSV exports now write safely before replacing the destination file.
+- `--page-limit` is now available only in fast mode.
+
+### Fixed
+
+- Verified exports avoid a known Last.fm paging problem that can repeat or miss tracks.
+- Verified exports report unexpected totals, empty pages, out-of-range tracks, timestamp order problems, and repeated page records.
 
 ## [0.2.0] - 2026-08-09
 ### Added
