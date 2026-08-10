@@ -1,6 +1,8 @@
 from typing import Iterator, Optional
 
 from lastfm_export.models import Scrobble
+from lastfm_export.integrity import WindowReport, WindowResult
+from lastfm_export.pipelines.lastfm_export import collect_verified_scrobbles
 from lastfm_export.pipelines.lastfm_export import export_scrobbles
 
 
@@ -76,3 +78,25 @@ def test_export_scrobbles_stops_early_when_reaching_watermark():
     assert [s.timestamp_unix for s in out] == [21]
     # Stops as soon as it sees <= watermark
     assert seen == [21, 20]
+
+
+def test_collect_verified_scrobbles_uses_disjoint_utc_days_newest_first():
+    class _WindowClient:
+        def __init__(self):
+            self.calls = []
+
+        def fetch_recent_tracks_window(self, *, from_unix, to_unix, page_size):
+            self.calls.append((from_unix, to_unix, page_size))
+            report = WindowReport(from_unix, to_unix, api_total=1, materialized_count=1, page_count=1)
+            return WindowResult(
+                [Scrobble("A", str(to_unix), None, to_unix)], report
+            )
+
+    client = _WindowClient()
+    records, reports = collect_verified_scrobbles(
+        lastfm=client, from_unix=1, to_unix=86_400, page_size=50
+    )
+
+    assert client.calls == [(86_400, 86_400, 50), (1, 86_399, 50)]
+    assert [record.timestamp_unix for record in records] == [86_400, 86_399]
+    assert len(reports) == 2

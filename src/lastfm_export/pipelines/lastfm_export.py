@@ -1,6 +1,8 @@
+from datetime import datetime, timedelta, timezone
 from typing import Iterator, Optional
 
 from lastfm_export.clients.lastfm import LastFMClient
+from lastfm_export.integrity import WindowReport
 from lastfm_export.models import Scrobble
 
 
@@ -37,3 +39,39 @@ def export_scrobbles(
         if watermark is not None and scrobble.timestamp_unix <= watermark:
             return
         yield scrobble
+
+
+def collect_verified_scrobbles(
+    *,
+    lastfm: LastFMClient,
+    from_unix: int,
+    to_unix: int,
+    page_size: int = 200,
+    watermark: Optional[int] = None,
+    stop_on_violation: bool = True,
+) -> tuple[list[Scrobble], list[WindowReport]]:
+    """Collect newest-to-oldest UTC-day windows with validation reports."""
+    records: list[Scrobble] = []
+    reports: list[WindowReport] = []
+    day = datetime.fromtimestamp(to_unix, timezone.utc).date()
+    earliest = datetime.fromtimestamp(from_unix, timezone.utc).date()
+
+    while day >= earliest:
+        day_start = int(datetime(day.year, day.month, day.day, tzinfo=timezone.utc).timestamp())
+        day_end = day_start + 86_399
+        result = lastfm.fetch_recent_tracks_window(
+            from_unix=max(day_start, from_unix),
+            to_unix=min(day_end, to_unix),
+            page_size=page_size,
+        )
+        reports.append(result.report)
+        if not result.report.ok and stop_on_violation:
+            break
+
+        for scrobble in result.scrobbles:
+            if watermark is not None and scrobble.timestamp_unix <= watermark:
+                return records, reports
+            records.append(scrobble)
+        day -= timedelta(days=1)
+
+    return records, reports

@@ -1,8 +1,10 @@
+import json
 import logging
 from typing import Any, Dict, Iterator, Optional
 
 from lastfm_export.clients.http import HttpClient
 from lastfm_export.errors import HttpRequestError, LastFMRecentTracksAccessError
+from lastfm_export.integrity import WindowReport, WindowResult
 from lastfm_export.models import Scrobble
 
 logger = logging.getLogger(__name__)
@@ -39,6 +41,84 @@ class LastFMClient:
             "format": "json",
         }
         return self.http.get_json(self.base_url, params=params)
+
+    def get_user_registration_unix(self) -> Optional[int]:
+        """Return the account registration timestamp when Last.fm exposes it."""
+        registered = self.get_user_info().get("user", {}).get("registered")
+        if isinstance(registered, dict):
+            registered = registered.get("unixtime")
+        try:
+            return int(registered)
+        except (TypeError, ValueError):
+            return None
+
+    def fetch_recent_tracks_window(
+        self, *, from_unix: int, to_unix: int, page_size: int = 200
+    ) -> WindowResult:
+        """Fetch one bounded window while collecting integrity evidence."""
+        if page_size <= 0:
+            raise ValueError("page_size must be > 0")
+
+        report = WindowReport(from_unix=from_unix, to_unix=to_unix)
+        scrobbles: list[Scrobble] = []
+        page = 1
+        previous_raw: list[dict[str, Any]] | None = None
+        previous_ts: int | None = None
+
+        while True:
+            payload = self._get_recent_tracks_page(
+                page=page, from_unix=from_unix, to_unix=to_unix, limit=page_size
+            )
+            recent = payload.get("recenttracks", {})
+            raw_tracks = recent.get("track", [])
+            if isinstance(raw_tracks, dict):
+                raw_tracks = [raw_tracks]
+            if not isinstance(raw_tracks, list):
+                raw_tracks = []
+
+            total_pages = self._extract_total_pages(recent)
+            api_total = self._extract_total(recent)
+            if report.api_total is None:
+                report.api_total = api_total
+            elif api_total != report.api_total:
+                report.violations.append("API total changed between pages")
+            report.page_count += 1
+
+            if not raw_tracks:
+                if total_pages is None or page < total_pages:
+                    report.violations.append(f"empty page {page} before reported end")
+                break
+
+            current_raw = [item for item in raw_tracks if isinstance(item, dict)]
+            if previous_raw and _page_overlap(previous_raw, current_raw):
+                report.violations.append(f"exact raw-payload overlap at page {page}")
+
+            for item in current_raw:
+                scrobble = self._parse_scrobble(item)
+                if scrobble is None:
+                    continue
+                if not from_unix <= scrobble.timestamp_unix <= to_unix:
+                    report.violations.append("record outside requested UTC window")
+                if previous_ts is not None and scrobble.timestamp_unix > previous_ts:
+                    report.violations.append("timestamp order reversal")
+                previous_ts = scrobble.timestamp_unix
+                scrobbles.append(scrobble)
+
+            previous_raw = current_raw
+            if total_pages is not None and page >= total_pages:
+                break
+            if total_pages is None and len(raw_tracks) < page_size:
+                break
+            page += 1
+
+        report.materialized_count = len(scrobbles)
+        if report.api_total is None:
+            report.violations.append("API response omitted total")
+        elif report.api_total != report.materialized_count:
+            report.violations.append(
+                f"API total {report.api_total} differs from materialized count {report.materialized_count}"
+            )
+        return WindowResult(scrobbles=scrobbles, report=report)
 
     def iter_recent_tracks(
         self,
@@ -152,6 +232,17 @@ class LastFMClient:
             return None
 
     @staticmethod
+    def _extract_total(recenttracks: Dict[str, Any]) -> Optional[int]:
+        attr = recenttracks.get("@attr")
+        if not isinstance(attr, dict):
+            return None
+        total = attr.get("total")
+        try:
+            return int(total)
+        except (TypeError, ValueError):
+            return None
+
+    @staticmethod
     def _parse_scrobble(item: Dict[str, Any]) -> Optional[Scrobble]:
         # Skip "now playing" (has no stable timestamp).
         attr = item.get("@attr")
@@ -191,3 +282,14 @@ class LastFMClient:
             mbid=str(mbid) if mbid is not None and str(mbid) else None,
             raw=item,
         )
+
+
+def _page_overlap(previous: list[dict[str, Any]], current: list[dict[str, Any]]) -> bool:
+    """Detect any exact raw suffix/prefix overlap without deduplicating it."""
+    max_overlap = min(len(previous), len(current))
+    for size in range(1, max_overlap + 1):
+        left = [json.dumps(x, ensure_ascii=False, sort_keys=True) for x in previous[-size:]]
+        right = [json.dumps(x, ensure_ascii=False, sort_keys=True) for x in current[:size]]
+        if left == right:
+            return True
+    return False
