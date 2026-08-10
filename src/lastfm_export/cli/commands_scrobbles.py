@@ -22,7 +22,10 @@ from lastfm_export.io.readers import (
     read_ndjson_records,
 )
 from lastfm_export.io.sinks import csv_sink, json_sink, ndjson_sink
-from lastfm_export.pipelines.lastfm_export import collect_verified_scrobbles
+from lastfm_export.pipelines.lastfm_export import (
+    collect_verified_scrobbles,
+    export_scrobbles,
+)
 
 scrobbles_app = typer.Typer(no_args_is_help=True)
 
@@ -56,10 +59,19 @@ def export_cmd(
     ),
     page_size: int = typer.Option(200, "--page-size", help="Last.fm page size."),
     page_limit: Optional[int] = typer.Option(
-        None, "--page-limit", help="Stop after this many pages."
+        None,
+        "--page-limit",
+        help="Stop after this many pages (fast mode only; useful for sampling).",
     ),
-    integrity_policy: str = typer.Option(
-        "strict", "--integrity-policy", help="strict | warn (default: strict)."
+    acquisition_mode: str = typer.Option(
+        "verified",
+        "--acquisition-mode",
+        help="verified | fast (default: verified).",
+    ),
+    integrity_policy: Optional[str] = typer.Option(
+        None,
+        "--integrity-policy",
+        help="strict | warn (verified mode only; default: strict).",
     ),
     api_key: Optional[str] = typer.Option(
         None, "--api-key", help="Last.fm API key (default: env LASTFM_API_KEY)."
@@ -72,15 +84,28 @@ def export_cmd(
     ),
 ) -> None:
     fmt = infer_format(out, format)
-    policy = integrity_policy.lower()
-    if policy not in {"strict", "warn"}:
+    mode = acquisition_mode.lower()
+    if mode not in {"verified", "fast"}:
+        raise ConfigError("--acquisition-mode must be 'verified' or 'fast'.")
+    if mode == "fast" and integrity_policy is not None:
+        raise ConfigError(
+            "--integrity-policy is only available with --acquisition-mode verified."
+        )
+    policy = (integrity_policy or "strict").lower()
+    if mode == "verified" and policy not in {"strict", "warn"}:
         raise ConfigError("--integrity-policy must be 'strict' or 'warn'.")
     if resume.lower() not in {"auto", "off"}:
         raise ConfigError("--resume must be 'auto' or 'off'.")
     if resume.lower() == "off":
         ensure_overwrite_allowed(out=out, fmt=fmt, overwrite=overwrite)
-    if page_limit is not None:
+    if mode == "verified" and page_limit is not None:
         raise ConfigError("--page-limit is not supported by verified exports.")
+    if mode == "fast":
+        typer.echo(
+            "WARNING: fast acquisition uses unverified sequential Last.fm pagination; "
+            "records may be duplicated or omitted.",
+            err=True,
+        )
 
     api_key_val = get_env_or_value("LASTFM_API_KEY", api_key)
     username_val = get_env_or_value("LASTFM_USERNAME", username)
@@ -109,42 +134,70 @@ def export_cmd(
         raise ConfigError("Could not determine account registration time; use --from.")
 
     try:
-        scrobbles, reports = collect_verified_scrobbles(
-            lastfm=lastfm,
-            from_unix=snapshot_from,
-            to_unix=snapshot_to,
-            page_size=page_size,
-            watermark=watermark,
-            stop_on_violation=policy == "strict",
-        )
+        if mode == "verified":
+            scrobbles, reports = collect_verified_scrobbles(
+                lastfm=lastfm,
+                from_unix=snapshot_from,
+                to_unix=snapshot_to,
+                page_size=page_size,
+                watermark=watermark,
+                stop_on_violation=policy == "strict",
+            )
+        else:
+            scrobbles = list(
+                export_scrobbles(
+                    lastfm=lastfm,
+                    from_unix=snapshot_from,
+                    to_unix=snapshot_to,
+                    page_size=page_size,
+                    page_limit=page_limit,
+                    watermark=watermark,
+                )
+            )
+            reports = []
     except LastFMRecentTracksAccessError as e:
         typer.echo(f"Error: {e}", err=True)
         raise typer.Exit(code=1) from e
     has_violations = any(not report.ok for report in reports)
-    status = "failed" if has_violations and policy == "strict" else (
-        "warnings" if has_violations else "ok"
+    status = (
+        "unverified"
+        if mode == "fast"
+        else "failed"
+        if has_violations and policy == "strict"
+        else "warnings"
+        if has_violations
+        else "ok"
     )
     report_path = Path(f"{out}.integrity.json")
-    _write_integrity_report(
-        report_path,
-        {
-            "status": status,
-            "integrity_policy": policy,
-            "from_unix": snapshot_from,
-            "to_unix": snapshot_to,
-            "watermark": watermark,
-            "windows": [report.to_record() for report in reports],
-        },
-    )
+    report = {
+        "status": status,
+        "acquisition_mode": mode,
+        "from_unix": snapshot_from,
+        "to_unix": snapshot_to,
+        "watermark": watermark,
+        "windows": [report.to_record() for report in reports],
+    }
+    if mode == "verified":
+        report["integrity_policy"] = policy
+    else:
+        report["reason"] = (
+            "Sequential Last.fm page-number pagination is known to repeat or skip records."
+        )
+    _write_integrity_report(report_path, report)
     if has_violations and policy == "strict":
-        typer.echo(f"Integrity check failed; destination was not modified. Report: {report_path}", err=True)
+        typer.echo(
+            f"Integrity check failed; destination was not modified. Report: {report_path}",
+            err=True,
+        )
         raise typer.Exit(code=1)
 
     merge_existing = out.exists() and not overwrite
     existing = _read_existing_records(out, fmt) if merge_existing else []
     new_records = [s.to_record(include_raw=include_raw) for s in scrobbles]
     # Preserve legacy NDJSON append behavior outside resume; resume keeps newest rows first.
-    records = new_records + existing if watermark is not None else existing + new_records
+    records = (
+        new_records + existing if watermark is not None else existing + new_records
+    )
 
     try:
         _write_records_transactionally(out=out, fmt=fmt, records=records)
@@ -188,7 +241,9 @@ def _write_integrity_report(path: Path, report: dict) -> None:
     temporary = path.with_name(f".{path.name}.{uuid4().hex}.tmp")
     try:
         temporary.parent.mkdir(parents=True, exist_ok=True)
-        temporary.write_text(json.dumps(report, ensure_ascii=False, indent=2), encoding="utf-8")
+        temporary.write_text(
+            json.dumps(report, ensure_ascii=False, indent=2), encoding="utf-8"
+        )
         os.replace(temporary, path)
     finally:
         if temporary.exists():

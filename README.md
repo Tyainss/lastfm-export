@@ -74,6 +74,26 @@ lastfm-export scrobbles export \
   --out scrobbles.ndjson
 ```
 
+Verified mode is the default. It gets one UTC day at a time and checks for
+problems in Last.fm's response. Use it for exports you want to keep.
+If a check finds a problem, it stops by default. `--integrity-policy warn`
+continues and marks the report with warnings.
+
+For quick exploration or a small sample, you can explicitly choose the faster,
+unverified sequential paginator:
+
+```bash
+lastfm-export scrobbles export \
+  --out sample.ndjson \
+  --acquisition-mode fast \
+  --page-limit 10
+```
+
+Fast mode uses Last.fm's normal page-by-page export. It is useful for quick
+checks or samples, but Last.fm can repeat or miss tracks. The export warns you
+and its report says `"status": "unverified"`. Do not use it for backups or a
+full history export. It does not accept `--integrity-policy`.
+
 Optional filters:
 
 ```bash
