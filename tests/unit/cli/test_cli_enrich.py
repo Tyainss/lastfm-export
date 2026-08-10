@@ -105,6 +105,58 @@ def test_cli_enrich_spotify_reads_ndjson_and_writes_ndjson(monkeypatch, tmp_path
     assert "raw" not in record["spotify"]
 
 
+def test_cli_enrich_progress_on_prints_start_and_keeps_final_stats(
+    monkeypatch, tmp_path: Path
+):
+    in_path = tmp_path / "scrobbles.ndjson"
+    out = tmp_path / "enriched.ndjson"
+    in_path.write_text(
+        json.dumps(
+            {
+                "artist_name": "A",
+                "track_name": "T",
+                "album_name": None,
+                "timestamp_unix": 1,
+                "mbid": None,
+            }
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+
+    class _FakeSpotifyClient:
+        def __init__(self, *args, **kwargs) -> None:
+            pass
+
+        def build_track_enrichment(self, *, track_name: str, artist_name: str):
+            return None
+
+    monkeypatch.setenv("SPOTIFY_CLIENT_ID", "id")
+    monkeypatch.setenv("SPOTIFY_CLIENT_SECRET", "sec")
+    monkeypatch.setattr(
+        "lastfm_export.cli.commands_enrich.SpotifyClient", _FakeSpotifyClient
+    )
+
+    result = runner.invoke(
+        app,
+        [
+            "enrich",
+            "spotify",
+            "--in",
+            str(in_path),
+            "--out",
+            str(out),
+            "--progress",
+            "on",
+        ],
+    )
+
+    assert result.exit_code == 0
+    assert "Starting Spotify enrichment:" in result.output
+    assert "Working: 1 records processed; 1 Spotify lookups" in result.output
+    assert "Spotify enrich stats: records=1" in result.output
+
+
 def test_cli_enrich_spotify_can_include_raw(monkeypatch, tmp_path: Path):
     in_path = tmp_path / "scrobbles.ndjson"
     out = tmp_path / "enriched.ndjson"

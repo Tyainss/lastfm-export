@@ -218,3 +218,65 @@ def test_iter_recent_tracks_preserves_unrelated_http_error():
         list(client.iter_recent_tracks())
 
     assert exc.value is http_error
+
+
+def _window_track(timestamp: int, name: str) -> Dict[str, Any]:
+    return {
+        "artist": {"#text": "Artist"},
+        "name": name,
+        "album": {"#text": "Album"},
+        "date": {"uts": str(timestamp)},
+    }
+
+
+def test_fetch_window_detects_known_cross_page_replay():
+    replay = _window_track(9, "Replay")
+    page_1 = {
+        "recenttracks": {
+            "@attr": {"page": "1", "totalPages": "2", "total": "2"},
+            "track": [_window_track(10, "First"), replay],
+        }
+    }
+    page_2 = {
+        "recenttracks": {
+            "@attr": {"page": "2", "totalPages": "2", "total": "2"},
+            "track": [replay],
+        }
+    }
+    client = LastFMClient(
+        api_key="k", username="u", user_agent="ua", http=_FakeHttp([page_1, page_2])
+    )
+
+    result = client.fetch_recent_tracks_window(from_unix=0, to_unix=10, page_size=2)
+
+    assert len(result.scrobbles) == 3
+    assert any("overlap" in violation for violation in result.report.violations)
+    assert any("differs" in violation for violation in result.report.violations)
+
+
+def test_fetch_window_detects_total_and_timestamp_violations():
+    page = {
+        "recenttracks": {
+            "@attr": {"page": "1", "totalPages": "1", "total": "3"},
+            "track": [
+                _window_track(5, "Old"),
+                _window_track(6, "New"),
+                _window_track(11, "Outside"),
+            ],
+        }
+    }
+    client = LastFMClient(
+        api_key="k", username="u", user_agent="ua", http=_FakeHttp([page])
+    )
+
+    result = client.fetch_recent_tracks_window(from_unix=0, to_unix=10)
+
+    assert any("outside" in violation for violation in result.report.violations)
+    assert any("reversal" in violation for violation in result.report.violations)
+
+
+def test_get_user_registration_unix_reads_lastfm_registered_timestamp():
+    http = _FakeHttp([{"user": {"registered": {"unixtime": "123"}}}])
+    client = LastFMClient(api_key="k", username="u", user_agent="ua", http=http)
+
+    assert client.get_user_registration_unix() == 123
