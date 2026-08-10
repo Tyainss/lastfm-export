@@ -94,6 +94,11 @@ checks or samples, but Last.fm can repeat or miss tracks. The export warns you
 and its report says `"status": "unverified"`. Do not use it for backups or a
 full history export. It does not accept `--integrity-policy`.
 
+Long-running commands show compact progress in a normal terminal. Use
+`--progress off` to hide it, or `--progress on` to keep it when running in a
+script or redirected terminal. Verified exports show a live status and one
+saved progress line for each completed quarter.
+
 Optional filters:
 
 ```bash

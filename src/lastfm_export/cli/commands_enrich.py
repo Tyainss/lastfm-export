@@ -5,6 +5,7 @@ from typing import Any, Callable, Dict, Iterable, Iterator, Optional, Tuple
 import typer
 
 from lastfm_export.clients.spotify import SpotifyClient
+from lastfm_export.cli.progress import ProgressReporter
 from lastfm_export.errors import ConfigError
 from lastfm_export.cli._common import (
     ensure_overwrite_allowed,
@@ -118,6 +119,7 @@ def _iter_enriched_records(
     only_missing: bool,
     include_raw: bool,
     stats: SpotifyEnrichStats,
+    on_record: Optional[Callable[[SpotifyEnrichStats], None]] = None,
 ) -> Iterator[Record]:
     cache: Dict[Tuple[str, str], Optional[SpotifyTrackEnrichment]] = {}
 
@@ -133,6 +135,8 @@ def _iter_enriched_records(
                 stats.records_skipped_existing += 1
                 if dedupe:
                     cache[key] = existing
+                if on_record is not None:
+                    on_record(stats)
                 yield rec
                 continue
 
@@ -156,6 +160,8 @@ def _iter_enriched_records(
             if enrichment is None
             else enrichment.to_record(include_raw=include_raw)
         )
+        if on_record is not None:
+            on_record(stats)
         yield out_rec
 
 
@@ -183,6 +189,11 @@ def enrich_spotify_cmd(
         "--include-raw",
         help="Include the original Spotify track payload in new enrichment data.",
     ),
+    progress: str = typer.Option(
+        "auto",
+        "--progress",
+        help="auto | on | off (default: auto).",
+    ),
     client_id: Optional[str] = typer.Option(
         None, "--client-id", help="Spotify client id (default: env SPOTIFY_CLIENT_ID)."
     ),
@@ -198,6 +209,10 @@ def enrich_spotify_cmd(
     in_fmt = infer_format(in_path, in_format)
     out_fmt = infer_format(out, out_format)
     ensure_overwrite_allowed(out=out, fmt=out_fmt, overwrite=overwrite)
+    try:
+        progress_reporter = ProgressReporter(progress)
+    except ValueError as e:
+        raise ConfigError("--progress must be 'auto', 'on', or 'off'.") from e
 
     cid = get_env_or_value("SPOTIFY_CLIENT_ID", client_id)
     csec = get_env_or_value("SPOTIFY_CLIENT_SECRET", client_secret)
@@ -208,6 +223,16 @@ def enrich_spotify_cmd(
     sink = _resolve_sink(out, out_fmt, overwrite=overwrite)
 
     stats = SpotifyEnrichStats()
+
+    def on_record(current: SpotifyEnrichStats) -> None:
+        progress_reporter.update(
+            "Working: "
+            f"{current.records_total} records processed; "
+            f"{current.spotify_lookups} Spotify lookups, "
+            f"{current.cache_hits} cache hits, {current.spotify_misses} misses"
+        )
+
+    progress_reporter.start(f"Starting Spotify enrichment: {in_path} -> {out}")
     out_records = _iter_enriched_records(
         records=records,
         spotify=spotify,
@@ -215,8 +240,10 @@ def enrich_spotify_cmd(
         only_missing=only_missing,
         include_raw=include_raw,
         stats=stats,
+        on_record=on_record,
     )
     sink(out_records)
 
+    progress_reporter.close()
     typer.echo(f"Wrote enriched scrobbles to {out}")
     typer.echo(stats.to_log_line())

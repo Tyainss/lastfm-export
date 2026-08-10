@@ -1,4 +1,5 @@
 import json
+from datetime import datetime, timezone
 from pathlib import Path
 
 import pytest
@@ -6,6 +7,7 @@ import pytest
 from typer.testing import CliRunner
 
 from lastfm_export.cli.app import app
+from lastfm_export.cli.commands_scrobbles import _is_completed_full_quarter
 from lastfm_export.integrity import WindowReport
 from lastfm_export.models import Scrobble
 
@@ -119,6 +121,28 @@ def test_cli_verified_export_can_include_raw(monkeypatch, tmp_path: Path):
     assert json.loads(out.read_text(encoding="utf-8"))["raw"] == {"name": "T"}
 
 
+def test_cli_progress_on_prints_verified_start_and_completion(
+    monkeypatch, tmp_path: Path
+):
+    out = tmp_path / "scrobbles.ndjson"
+    result = _invoke(monkeypatch, out, _records(), [_report()], "--progress", "on")
+
+    assert result.exit_code == 0
+    assert "Starting verified export:" in result.output
+    assert (
+        "Completed verified export: 1 tracks from 1 days; integrity: ok"
+        in result.output
+    )
+
+
+def test_cli_progress_auto_is_quiet_in_test_runner(monkeypatch, tmp_path: Path):
+    out = tmp_path / "scrobbles.ndjson"
+    result = _invoke(monkeypatch, out, _records(), [_report()])
+
+    assert result.exit_code == 0
+    assert "Starting verified export:" not in result.output
+
+
 def test_cli_strict_failure_preserves_existing_destination(monkeypatch, tmp_path: Path):
     out = tmp_path / "scrobbles.ndjson"
     out.write_text('{"track_name":"old"}\n', encoding="utf-8")
@@ -211,11 +235,51 @@ def test_cli_fast_export_is_unverified_and_honors_page_limit(
     assert "repeat or skip" in report["reason"]
 
 
+def test_cli_fast_progress_on_prints_page_summary(monkeypatch, tmp_path: Path):
+    out = tmp_path / "scrobbles.ndjson"
+    result = _invoke_fast(monkeypatch, out, _records(), "--progress", "on")
+
+    assert result.exit_code == 0
+    assert "Starting fast export:" in result.output
+    assert (
+        "Completed fast export: 1 tracks from 0 days; integrity: unverified"
+        in result.output
+    )
+
+
 def test_cli_fast_rejects_integrity_policy(monkeypatch, tmp_path: Path):
     out = tmp_path / "scrobbles.ndjson"
     result = _invoke_fast(monkeypatch, out, _records(), "--integrity-policy", "warn")
     assert result.exit_code != 0
     assert "integrity-policy" in str(result.exception)
+
+
+def test_cli_rejects_unknown_progress_mode(monkeypatch, tmp_path: Path):
+    out = tmp_path / "scrobbles.ndjson"
+    result = _invoke(monkeypatch, out, _records(), [_report()], "--progress", "noisy")
+    assert result.exit_code != 0
+    assert "progress" in str(result.exception)
+
+
+def test_completed_quarter_requires_the_full_utc_quarter_in_range():
+    quarter_start = int(datetime(2026, 4, 1, tzinfo=timezone.utc).timestamp())
+    quarter_end = int(datetime(2026, 7, 1, tzinfo=timezone.utc).timestamp()) - 1
+
+    assert _is_completed_full_quarter(
+        day=datetime(2026, 4, 1).date(),
+        from_unix=quarter_start,
+        to_unix=quarter_end,
+    )
+    assert not _is_completed_full_quarter(
+        day=datetime(2026, 4, 2).date(),
+        from_unix=quarter_start,
+        to_unix=quarter_end,
+    )
+    assert not _is_completed_full_quarter(
+        day=datetime(2026, 4, 1).date(),
+        from_unix=quarter_start + 1,
+        to_unix=quarter_end,
+    )
 
 
 def test_cli_freezes_now_and_uses_registration_fallback(monkeypatch, tmp_path: Path):

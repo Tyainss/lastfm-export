@@ -1,5 +1,6 @@
 import json
 import logging
+from collections.abc import Callable
 from typing import Any, Dict, Iterator, Optional
 
 from lastfm_export.clients.http import HttpClient
@@ -127,6 +128,7 @@ class LastFMClient:
         to_unix: Optional[int] = None,
         page_size: int = 200,
         page_limit: Optional[int] = None,
+        on_page: Optional[Callable[[int], None]] = None,
     ) -> Iterator[Scrobble]:
         """
         Yield scrobbles newest -> oldest.
@@ -174,6 +176,8 @@ class LastFMClient:
                 pass
 
             pages_seen += 1
+            if on_page is not None:
+                on_page(pages_seen)
             if page_limit is not None and pages_seen >= page_limit:
                 return
 
