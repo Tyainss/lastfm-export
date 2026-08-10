@@ -87,10 +87,10 @@ def test_collect_verified_scrobbles_uses_disjoint_utc_days_newest_first():
 
         def fetch_recent_tracks_window(self, *, from_unix, to_unix, page_size):
             self.calls.append((from_unix, to_unix, page_size))
-            report = WindowReport(from_unix, to_unix, api_total=1, materialized_count=1, page_count=1)
-            return WindowResult(
-                [Scrobble("A", str(to_unix), None, to_unix)], report
+            report = WindowReport(
+                from_unix, to_unix, api_total=1, materialized_count=1, page_count=1
             )
+            return WindowResult([Scrobble("A", str(to_unix), None, to_unix)], report)
 
     client = _WindowClient()
     records, reports = collect_verified_scrobbles(

@@ -57,7 +57,9 @@ def collect_verified_scrobbles(
     earliest = datetime.fromtimestamp(from_unix, timezone.utc).date()
 
     while day >= earliest:
-        day_start = int(datetime(day.year, day.month, day.day, tzinfo=timezone.utc).timestamp())
+        day_start = int(
+            datetime(day.year, day.month, day.day, tzinfo=timezone.utc).timestamp()
+        )
         day_end = day_start + 86_399
         result = lastfm.fetch_recent_tracks_window(
             from_unix=max(day_start, from_unix),

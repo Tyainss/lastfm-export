@@ -284,12 +284,18 @@ class LastFMClient:
         )
 
 
-def _page_overlap(previous: list[dict[str, Any]], current: list[dict[str, Any]]) -> bool:
+def _page_overlap(
+    previous: list[dict[str, Any]], current: list[dict[str, Any]]
+) -> bool:
     """Detect any exact raw suffix/prefix overlap without deduplicating it."""
     max_overlap = min(len(previous), len(current))
     for size in range(1, max_overlap + 1):
-        left = [json.dumps(x, ensure_ascii=False, sort_keys=True) for x in previous[-size:]]
-        right = [json.dumps(x, ensure_ascii=False, sort_keys=True) for x in current[:size]]
+        left = [
+            json.dumps(x, ensure_ascii=False, sort_keys=True) for x in previous[-size:]
+        ]
+        right = [
+            json.dumps(x, ensure_ascii=False, sort_keys=True) for x in current[:size]
+        ]
         if left == right:
             return True
     return False

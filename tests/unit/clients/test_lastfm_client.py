@@ -231,9 +231,21 @@ def _window_track(timestamp: int, name: str) -> Dict[str, Any]:
 
 def test_fetch_window_detects_known_cross_page_replay():
     replay = _window_track(9, "Replay")
-    page_1 = {"recenttracks": {"@attr": {"page": "1", "totalPages": "2", "total": "2"}, "track": [_window_track(10, "First"), replay]}}
-    page_2 = {"recenttracks": {"@attr": {"page": "2", "totalPages": "2", "total": "2"}, "track": [replay]}}
-    client = LastFMClient(api_key="k", username="u", user_agent="ua", http=_FakeHttp([page_1, page_2]))
+    page_1 = {
+        "recenttracks": {
+            "@attr": {"page": "1", "totalPages": "2", "total": "2"},
+            "track": [_window_track(10, "First"), replay],
+        }
+    }
+    page_2 = {
+        "recenttracks": {
+            "@attr": {"page": "2", "totalPages": "2", "total": "2"},
+            "track": [replay],
+        }
+    }
+    client = LastFMClient(
+        api_key="k", username="u", user_agent="ua", http=_FakeHttp([page_1, page_2])
+    )
 
     result = client.fetch_recent_tracks_window(from_unix=0, to_unix=10, page_size=2)
 
@@ -246,10 +258,16 @@ def test_fetch_window_detects_total_and_timestamp_violations():
     page = {
         "recenttracks": {
             "@attr": {"page": "1", "totalPages": "1", "total": "3"},
-            "track": [_window_track(5, "Old"), _window_track(6, "New"), _window_track(11, "Outside")],
+            "track": [
+                _window_track(5, "Old"),
+                _window_track(6, "New"),
+                _window_track(11, "Outside"),
+            ],
         }
     }
-    client = LastFMClient(api_key="k", username="u", user_agent="ua", http=_FakeHttp([page]))
+    client = LastFMClient(
+        api_key="k", username="u", user_agent="ua", http=_FakeHttp([page])
+    )
 
     result = client.fetch_recent_tracks_window(from_unix=0, to_unix=10)
 
