@@ -2,6 +2,7 @@
 
 ## [Unreleased]
 
+## [0.3.0] - 2026-08-11
 ### Added
 
 - Added verified daily scrobble exports as the default.
