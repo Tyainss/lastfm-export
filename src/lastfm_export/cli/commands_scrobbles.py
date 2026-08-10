@@ -76,6 +76,11 @@ def export_cmd(
         "--integrity-policy",
         help="strict | warn (verified mode only; default: strict).",
     ),
+    integrity_report: str = typer.Option(
+        "auto",
+        "--integrity-report",
+        help="auto | always | never (default: auto).",
+    ),
     progress: str = typer.Option(
         "auto",
         "--progress",
@@ -102,6 +107,9 @@ def export_cmd(
     policy = (integrity_policy or "strict").lower()
     if mode == "verified" and policy not in {"strict", "warn"}:
         raise ConfigError("--integrity-policy must be 'strict' or 'warn'.")
+    report_mode = integrity_report.lower()
+    if report_mode not in {"auto", "always", "never"}:
+        raise ConfigError("--integrity-report must be 'auto', 'always', or 'never'.")
     try:
         progress_reporter = ProgressReporter(progress)
     except ValueError as e:
@@ -208,23 +216,30 @@ def export_cmd(
         if has_violations
         else "ok"
     )
+    strict_failure = has_violations and policy == "strict"
+    should_write_report = (
+        strict_failure
+        or report_mode == "always"
+        or (report_mode == "auto" and has_violations)
+    )
     report_path = Path(f"{out}.integrity.json")
-    report = {
-        "status": status,
-        "acquisition_mode": mode,
-        "from_unix": snapshot_from,
-        "to_unix": snapshot_to,
-        "watermark": watermark,
-        "windows": [report.to_record() for report in reports],
-    }
-    if mode == "verified":
-        report["integrity_policy"] = policy
-    else:
-        report["reason"] = (
-            "Sequential Last.fm page-number pagination is known to repeat or skip records."
-        )
-    _write_integrity_report(report_path, report)
-    if has_violations and policy == "strict":
+    if should_write_report:
+        report = {
+            "status": status,
+            "acquisition_mode": mode,
+            "from_unix": snapshot_from,
+            "to_unix": snapshot_to,
+            "watermark": watermark,
+            "windows": [report.to_record() for report in reports],
+        }
+        if mode == "verified":
+            report["integrity_policy"] = policy
+        else:
+            report["reason"] = (
+                "Sequential Last.fm page-number pagination is known to repeat or skip records."
+            )
+        _write_integrity_report(report_path, report)
+    if strict_failure:
         progress_reporter.finish(
             f"Stopped verified export after {len(scrobbles)} tracks from {len(reports)} days; "
             "integrity: failed"
@@ -256,8 +271,14 @@ def export_cmd(
         f"integrity: {status}"
     )
     typer.echo(f"Wrote scrobbles to {out}")
-    if has_violations:
+    if has_violations and should_write_report:
         typer.echo(f"Warning: integrity violations recorded in {report_path}", err=True)
+    elif has_violations:
+        typer.echo(
+            "Warning: integrity violations detected; no report was written "
+            "(--integrity-report never).",
+            err=True,
+        )
 
 
 def _read_existing_records(path: Path, fmt: str) -> list[dict]:

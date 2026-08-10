@@ -104,11 +104,22 @@ def _invoke_fast(monkeypatch, out: Path, records, *extra: str):
     )
 
 
-def test_cli_verified_export_writes_rows_and_ok_report(monkeypatch, tmp_path: Path):
+def test_cli_verified_export_writes_rows_without_report_by_default(
+    monkeypatch, tmp_path: Path
+):
     out = tmp_path / "scrobbles.ndjson"
     result = _invoke(monkeypatch, out, _records(), [_report()])
     assert result.exit_code == 0
     assert json.loads(out.read_text(encoding="utf-8"))["track_name"] == "T"
+    assert not Path(f"{out}.integrity.json").exists()
+
+
+def test_cli_verified_export_always_writes_ok_report(monkeypatch, tmp_path: Path):
+    out = tmp_path / "scrobbles.ndjson"
+    result = _invoke(
+        monkeypatch, out, _records(), [_report()], "--integrity-report", "always"
+    )
+    assert result.exit_code == 0
     report = json.loads(Path(f"{out}.integrity.json").read_text(encoding="utf-8"))
     assert report["status"] == "ok"
     assert report["to_unix"] == 10
@@ -153,6 +164,22 @@ def test_cli_strict_failure_preserves_existing_destination(monkeypatch, tmp_path
     assert report["status"] == "failed"
 
 
+def test_cli_strict_failure_writes_report_when_report_mode_is_never(
+    monkeypatch, tmp_path: Path
+):
+    out = tmp_path / "scrobbles.ndjson"
+    result = _invoke(
+        monkeypatch,
+        out,
+        _records(),
+        [_report("exact overlap")],
+        "--integrity-report",
+        "never",
+    )
+    assert result.exit_code == 1
+    assert Path(f"{out}.integrity.json").exists()
+
+
 def test_cli_warn_publishes_unverified_output(monkeypatch, tmp_path: Path):
     out = tmp_path / "scrobbles.ndjson"
     result = _invoke(
@@ -169,6 +196,23 @@ def test_cli_warn_publishes_unverified_output(monkeypatch, tmp_path: Path):
     assert report["status"] == "warnings"
 
 
+def test_cli_warn_never_suppresses_report(monkeypatch, tmp_path: Path):
+    out = tmp_path / "scrobbles.ndjson"
+    result = _invoke(
+        monkeypatch,
+        out,
+        _records(),
+        [_report("exact overlap")],
+        "--integrity-policy",
+        "warn",
+        "--integrity-report",
+        "never",
+    )
+    assert result.exit_code == 0
+    assert "no report was written" in result.output
+    assert not Path(f"{out}.integrity.json").exists()
+
+
 def test_cli_rejects_unknown_integrity_policy(monkeypatch, tmp_path: Path):
     out = tmp_path / "scrobbles.ndjson"
     result = _invoke(
@@ -176,6 +220,15 @@ def test_cli_rejects_unknown_integrity_policy(monkeypatch, tmp_path: Path):
     )
     assert result.exit_code != 0
     assert "integrity-policy" in str(result.exception)
+
+
+def test_cli_rejects_unknown_integrity_report_mode(monkeypatch, tmp_path: Path):
+    out = tmp_path / "scrobbles.ndjson"
+    result = _invoke(
+        monkeypatch, out, _records(), [_report()], "--integrity-report", "sometimes"
+    )
+    assert result.exit_code != 0
+    assert "integrity-report" in str(result.exception)
 
 
 def test_cli_verified_rejects_page_limit(monkeypatch, tmp_path: Path):
@@ -229,6 +282,14 @@ def test_cli_fast_export_is_unverified_and_honors_page_limit(
     assert captured["from_unix"] == 0
     assert captured["to_unix"] == 10
     assert captured["page_limit"] == 3
+    assert not Path(f"{out}.integrity.json").exists()
+
+
+def test_cli_fast_export_always_writes_unverified_report(monkeypatch, tmp_path: Path):
+    out = tmp_path / "scrobbles.ndjson"
+    result = _invoke_fast(monkeypatch, out, _records(), "--integrity-report", "always")
+
+    assert result.exit_code == 0
     report = json.loads(Path(f"{out}.integrity.json").read_text(encoding="utf-8"))
     assert report["status"] == "unverified"
     assert report["acquisition_mode"] == "fast"

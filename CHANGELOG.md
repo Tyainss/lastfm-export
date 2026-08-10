@@ -4,8 +4,9 @@
 
 ### Added
 
-- Added verified daily scrobble exports as the default, with an integrity report beside the output file.
+- Added verified daily scrobble exports as the default.
 - Added `--integrity-policy strict|warn` for verified exports.
+- Added `--integrity-report auto|always|never`; detailed reports default to verification problems only.
 - Added `--acquisition-mode fast` for quick, unverified exports.
 - Added compact `--progress auto|on|off` feedback to scrobble exports and Spotify enrichment.
 

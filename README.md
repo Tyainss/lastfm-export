@@ -77,7 +77,10 @@ lastfm-export scrobbles export \
 Verified mode is the default. It gets one UTC day at a time and checks for
 problems in Last.fm's response. Use it for exports you want to keep.
 If a check finds a problem, it stops by default. `--integrity-policy warn`
-continues and marks the report with warnings.
+continues and marks the export with warnings. A detailed integrity report is
+saved by default for failures and warning exports. Use `--integrity-report always` to
+also save one for clean exports, or `--integrity-report never` to suppress
+reports for successful exports.
 
 For quick exploration or a small sample, you can explicitly choose the faster,
 unverified sequential paginator:
@@ -91,8 +94,9 @@ lastfm-export scrobbles export \
 
 Fast mode uses Last.fm's normal page-by-page export. It is useful for quick
 checks or samples, but Last.fm can repeat or miss tracks. The export warns you
-and its report says `"status": "unverified"`. Do not use it for backups or a
-full history export. It does not accept `--integrity-policy`.
+but does not create a report by default. Use `--integrity-report always` to
+save an `"unverified"` report. Do not use it for backups or a full history
+export. It does not accept `--integrity-policy`.
 
 Long-running commands show compact progress in a normal terminal. Use
 `--progress off` to hide it, or `--progress on` to keep it when running in a
