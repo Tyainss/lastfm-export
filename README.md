@@ -1,241 +1,183 @@
 # lastfm-export
 
-Export your **Last.fm** listening history (scrobbles) and optionally **enrich** it with **Spotify** metadata.
+Export your Last.fm listening history and collect music information for your own analysis.
 
-Designed for both:
+- Save your recorded listens (scrobbles) as CSV, JSON or NDJSON.
+- Get artist tags and similar artists from Last.fm, or artist details from MusicBrainz.
+- Add Spotify track information to an existing export.
 
-* **CLI-first users** who want “just get my data”, and
-* **Python users** who want reusable clients and pipelines.
-
----
-
-## Features
-
-* Export scrobbles from Last.fm with paging + retry/backoff.
-* Optional Spotify enrichment (track metadata lookup).
-* Streaming-friendly outputs (NDJSON recommended).
-* Works with environment variables (no secrets in code).
-
----
+Use it from the command line or in Python.
 
 ## Install
 
-Using `uv`:
+Requires Python 3.10+. Install the command-line tool with [uv](https://docs.astral.sh/uv/getting-started/installation/):
 
 ```bash
-uv pip install lastfm-export
+uv tool install lastfm-export
 ```
 
-Or with `.env` support for local development:
+Optional `.env` support is available by installing `lastfm-export[dotenv]` instead.
+For use in a Python project, see [Use from Python](#use-from-python).
+
+## Export listening history
+
+[Get a Last.fm API key](https://www.last.fm/api/account/create), then set your key and username as environment variables:
 
 ```bash
-uv pip install "lastfm-export[dotenv]"
+export LASTFM_API_KEY="your-api-key"
+export LASTFM_USERNAME="your-username"
 ```
 
----
-
-## Authentication
-
-### Last.fm
-
-Set these environment variables:
+Export your listening history:
 
 ```bash
-export LASTFM_API_KEY="..."
-export LASTFM_USERNAME="..."
+lastfm-export scrobbles export --out scrobbles.csv
 ```
 
-> **Last.fm privacy setting:** Exporting scrobbles requires your recent listening
-> information to be available through the Last.fm API. Make sure **“Hide recent
-> listening information”** is disabled in your Last.fm privacy settings. This
-> setting controls whether your recent listening information is publicly visible.
+The file contains the artist, track, album and listening time for each recorded listen.
+Run the same command again to add new listens to the existing export.
 
-### Spotify (optional)
+Exports check Last.fm's responses by default and stop if they find inconsistent data.
+If Last.fm denies access, check that **Hide recent listening information** is disabled in your Last.fm privacy settings.
 
-Set these environment variables:
+To export a particular date range:
 
 ```bash
-export SPOTIFY_CLIENT_ID="..."
-export SPOTIFY_CLIENT_SECRET="..."
+lastfm-export scrobbles export --out july.csv --from 2026-07-01 --to 2026-07-31
 ```
 
-If you installed `lastfm-export[dotenv]`, you can also put these values in a local `.env` file.
+Dates use UTC and include both the start and end date.
 
----
+## Collect artist information
 
-## Quickstart (CLI)
+Collect Last.fm tags and similar artists for a list of names. This needs only `LASTFM_API_KEY`, not a username.
 
-### 1) Export scrobbles
+Create `artists.json`:
 
-Recommended output format: **NDJSON** (one JSON object per line).
+```json
+[
+  {"artist_name": "Radiohead"},
+  {"artist_name": "Portishead"}
+]
+```
+
+Then run:
 
 ```bash
-lastfm-export scrobbles export \
-  --out scrobbles.ndjson
+lastfm-export enrich artists --in artists.json --out artist_metadata
 ```
 
-Verified mode is the default. It gets one UTC day at a time and checks for
-problems in Last.fm's response. Use it for exports you want to keep.
-If a check finds a problem, it stops by default. `--integrity-policy warn`
-continues and marks the export with warnings. A detailed integrity report is
-saved by default for failures and warning exports. Use `--integrity-report always` to
-also save one for clean exports, or `--integrity-report never` to suppress
-reports for successful exports.
+The collected data is saved in `artist_metadata/results.ndjson`. Use a new output folder for each collection.
 
-For quick exploration or a small sample, you can explicitly choose the faster,
-unverified sequential paginator:
+To continue an interrupted collection:
 
 ```bash
-lastfm-export scrobbles export \
-  --out sample.ndjson \
-  --acquisition-mode fast \
-  --page-limit 10
+lastfm-export enrich artists --out artist_metadata --resume
 ```
 
-Fast mode uses Last.fm's normal page-by-page export. It is useful for quick
-checks or samples, but Last.fm can repeat or miss tracks. The export warns you
-but does not create a report by default. Use `--integrity-report always` to
-save an `"unverified"` report. Do not use it for backups or a full history
-export. It does not accept `--integrity-policy`.
+Add `--retry-failed` to retry failed requests when resuming. To refresh a finished collection, choose a new output folder.
 
-Long-running commands show compact progress in a normal terminal. Use
-`--progress off` to hide it, or `--progress on` to keep it when running in a
-script or redirected terminal. Verified exports show a live status and one
-saved progress line for each completed quarter.
+### MusicBrainz (optional)
 
-Optional filters:
+MusicBrainz provides artist genres, tags, country and other details. Identify your application with a name, version and contact email or URL:
 
 ```bash
-lastfm-export scrobbles export \
-  --out scrobbles.ndjson \
-  --from YYYY-MM-DD \
-  --to YYYY-MM-DD
+export MUSICBRAINZ_USER_AGENT="my-music-app/1.0 (you@example.com)"
+lastfm-export enrich artists --in artists.json --out artist_search --operation musicbrainz_search
 ```
 
-You can also pass full datetimes:
+Search returns possible matches for you to check. To collect details for a chosen match, add its MusicBrainz artist ID as `mbid` in each input record and use `--operation musicbrainz_lookup` with a new output folder.
+
+## Add Spotify information
+
+Create an app in the [Spotify developer dashboard](https://developer.spotify.com/dashboard) and set its credentials:
 
 ```bash
-lastfm-export scrobbles export \
-  --out scrobbles.ndjson \
-  --from YYYY-MM-DDTHH:MM:SS \
-  --to YYYY-MM-DDTHH:MM:SS
+export SPOTIFY_CLIENT_ID="your-client-id"
+export SPOTIFY_CLIENT_SECRET="your-client-secret"
 ```
 
-Resume (incremental export):
+Add Spotify information to your exported listens:
 
 ```bash
-lastfm-export scrobbles export \
-  --out scrobbles.ndjson \
-  --resume auto
+lastfm-export enrich spotify --in scrobbles.csv --out scrobbles_spotify.csv
 ```
 
-### 2) Enrich with Spotify
+Some tracks may not match. Spotify credentials are needed only for this command.
+
+## File formats
+
+| Format | Useful for |
+| --- | --- |
+| CSV | Spreadsheets and tabular analysis |
+| JSON | A single list of records |
+| NDJSON | One JSON record per line, convenient for processing records individually |
+
+By default, scrobble and Spotify exports use the format indicated by the output filename.
+Artist collection accepts these three input formats and saves results as NDJSON.
+
+Add `--include-raw` to scrobble or Spotify commands to keep the original API data alongside the exported fields. Artist collection always keeps the source responses.
+
+## Use from Python
+
+Add the package to your project:
 
 ```bash
-lastfm-export enrich spotify \
-  --in scrobbles.ndjson \
-  --out scrobbles_enriched.ndjson
+uv add lastfm-export
 ```
 
-Notes:
-
-* Spotify enrichment is best-effort: some tracks may not match cleanly.
-* Use NDJSON for large exports.
-
----
-
-## Quickstart (Python)
-
-### Export scrobbles
+Create a client using the environment variables set above:
 
 ```python
+import os
+
 from lastfm_export.clients.lastfm import LastFMClient
-from lastfm_export.pipelines.lastfm_export import export_scrobbles
 
 lastfm = LastFMClient(
-    api_key="...",
-    username="...",
-    user_agent="lastfm-export",
+    api_key=os.environ["LASTFM_API_KEY"],
+    username=os.getenv("LASTFM_USERNAME"),
+    user_agent="my-music-app",
 )
-
-for scrobble in export_scrobbles(lastfm=lastfm):
-    print(scrobble.to_record())
 ```
 
-### Enrich with Spotify
+Read listens directly. This simple Python export does not perform the CLI's completeness checks:
 
 ```python
-from lastfm_export.clients.spotify import SpotifyClient
-from lastfm_export.pipelines.spotify_enrich import enrich_scrobbles_with_spotify
+from lastfm_export.pipelines.lastfm_export import export_scrobbles
 
-spotify = SpotifyClient(
-    client_id="...",
-    client_secret="...",
-    user_agent="lastfm-export",
+for listen in export_scrobbles(lastfm=lastfm):
+    print(listen.to_record())
+```
+
+Using the same client, collect artist information:
+
+```python
+from pathlib import Path
+
+from lastfm_export.models import ArtistInput
+from lastfm_export.pipelines.artist_metadata import collect_artist_metadata
+
+summary = collect_artist_metadata(
+    artists=[ArtistInput("Portishead")],
+    lastfm=lastfm,
+    out=Path("artist_metadata"),
 )
-
-enriched = enrich_scrobbles_with_spotify(spotify=spotify, scrobbles=export_scrobbles(lastfm=lastfm))
-for row in enriched:
-    print(row.to_record())
+print(summary)
 ```
 
----
+## Help and contributing
 
-## Output formats
-
-Supported formats depend on command:
-
-* **NDJSON**: recommended for streaming and incremental runs.
-* JSON array: convenient for small exports.
-* CSV: convenient for spreadsheets.
-
-Tip: For large histories, use NDJSON to avoid loading everything into memory.
-
-### Raw source payloads
-
-Normalized output remains the default. To also preserve the per-track source payload, use `--include-raw`:
+See the available commands and options:
 
 ```bash
-lastfm-export scrobbles export \
-  --out scrobbles.ndjson \
-  --include-raw
-
-lastfm-export enrich spotify \
-  --in scrobbles.ndjson \
-  --out scrobbles_enriched.ndjson \
-  --include-raw
+lastfm-export --help
+lastfm-export scrobbles export --help
+lastfm-export enrich artists --help
+lastfm-export enrich spotify --help
 ```
 
-For Python usage, pass `include_raw=True` to `to_record()`. Last.fm payloads are stored in `raw`, while Spotify payloads are stored in `spotify.raw`. In CSV output, nested payloads are JSON-encoded in cells.
-
-Raw payload shapes are controlled by the upstream APIs and may change independently of the normalized export schema.
-
----
-
-## Development
-
-Clone the repo and set up the environment with `uv`:
-
-```bash
-uv venv
-uv sync
-```
-
-Run checks:
-
-```bash
-uv run ruff check .
-uv run pytest -q
-```
-
-Build:
-
-```bash
-uv build --no-sources
-```
-
----
+For development setup and contribution guidelines, see [CONTRIBUTING.md](CONTRIBUTING.md).
 
 ## License
 
-See `LICENSE`.
+[MIT](LICENSE).

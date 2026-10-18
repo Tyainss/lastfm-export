@@ -2,6 +2,11 @@
 
 ## [Unreleased]
 
+### Added
+
+- Added artist tags and similar artists from Last.fm, and artist details from MusicBrainz.
+- Added artist collection through the command line and Python, with support for resuming interrupted runs and retrying failed requests.
+
 ## [0.3.0] - 2026-08-11
 ### Added
 
