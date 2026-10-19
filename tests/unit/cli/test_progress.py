@@ -68,3 +68,19 @@ def test_auto_progress_uses_a_live_line_for_interactive_streams():
     reporter.finish("Completed")
 
     assert stream.getvalue() == "Starting\n\rWorking\nCompleted 2026 Q2\nCompleted\n"
+
+
+def test_shorter_live_updates_clear_previous_text_and_reset_after_a_milestone():
+    stream = _Stream(interactive=True)
+    reporter = ProgressReporter("on", stream=stream)
+
+    reporter.update("remaining=34", force=True)
+    reporter.update("remaining=3", force=True)
+    reporter.update("remaining=0", force=True)
+    reporter.milestone("Completed")
+    reporter.update("Next", force=True)
+    reporter.close()
+
+    assert stream.getvalue() == (
+        "\rremaining=34\rremaining=3 \rremaining=0 \nCompleted\n\rNext\n"
+    )
