@@ -1,6 +1,6 @@
 # lastfm-export
 
-Export your Last.fm listening history and collect music information for your own analysis.
+Export your **Last.fm** listening history and collect music information for your own analysis.
 
 - Save your recorded listens (scrobbles) as CSV, JSON or NDJSON.
 - Get artist tags and similar artists from Last.fm, or artist details from MusicBrainz.
@@ -50,7 +50,7 @@ Dates use UTC and include both the start and end date.
 
 ## Collect artist information
 
-Collect Last.fm tags and similar artists for a list of names. This needs only `LASTFM_API_KEY`, not a username.
+Collect Last.fm tags and similar artists for a list of names. This needs only `LASTFM_API_KEY` as an environment variable.
 
 Create `artists.json`:
 
