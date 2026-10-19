@@ -3,17 +3,21 @@ import logging
 from collections.abc import Callable
 from typing import Any, Dict, Iterator, Optional
 
-from lastfm_export.clients.http import HttpClient
-from lastfm_export.errors import HttpRequestError, LastFMRecentTracksAccessError
+from lastfm_export.clients.http import HttpClient, JsonResponse, validate_base_url
+from lastfm_export.errors import (
+    ConfigError,
+    HttpRequestError,
+    LastFMRecentTracksAccessError,
+)
 from lastfm_export.integrity import WindowReport, WindowResult
-from lastfm_export.models import Scrobble
+from lastfm_export.models import ArtistInput, ArtistMetadataResponse, Scrobble
 
 logger = logging.getLogger(__name__)
 
 
 class LastFMClient:
     """
-    Minimal Last.fm API client for exporting scrobbles.
+    Last.fm API client for scrobbles and public artist metadata.
 
     Notes:
     - `iter_recent_tracks()` yields scrobbles newest -> oldest, matching API order.
@@ -24,7 +28,7 @@ class LastFMClient:
         self,
         *,
         api_key: str,
-        username: str,
+        username: str | None = None,
         user_agent: str,
         base_url: str = "https://ws.audioscrobbler.com/2.0/",
         http: Optional[HttpClient] = None,
@@ -34,10 +38,102 @@ class LastFMClient:
         self.base_url = base_url
         self.http = http or HttpClient(user_agent=user_agent)
 
+    def _require_username(self) -> str:
+        if not self.username or not self.username.strip():
+            raise ConfigError("A Last.fm username is required for user operations")
+        return self.username
+
+    def get_artist_top_tags(
+        self,
+        *,
+        artist_name: str,
+        mbid: str | None = None,
+        autocorrect: bool = False,
+    ) -> ArtistMetadataResponse:
+        return self._get_artist_metadata(
+            "artist.getTopTags",
+            ArtistInput(artist_name, mbid),
+            autocorrect=autocorrect,
+        )
+
+    def get_similar_artists(
+        self,
+        *,
+        artist_name: str,
+        mbid: str | None = None,
+        limit: int = 25,
+        autocorrect: bool = False,
+    ) -> ArtistMetadataResponse:
+        if not isinstance(limit, int) or isinstance(limit, bool) or limit < 1:
+            raise ValueError("limit must be a positive integer")
+        return self._get_artist_metadata(
+            "artist.getSimilar",
+            ArtistInput(artist_name, mbid),
+            autocorrect=autocorrect,
+            limit=limit,
+        )
+
+    def _get_artist_metadata(
+        self,
+        method: str,
+        artist: ArtistInput,
+        *,
+        autocorrect: bool,
+        limit: int | None = None,
+    ) -> ArtistMetadataResponse:
+        validate_base_url(self.base_url)
+        if not isinstance(autocorrect, bool):
+            raise ValueError("autocorrect must be boolean")
+        if not self.api_key or not self.api_key.strip():
+            raise ConfigError("A Last.fm API key is required")
+        params = artist_metadata_params(
+            method, artist, autocorrect=autocorrect, limit=limit
+        )
+        response = self.http.get_response(
+            self.base_url,
+            params={**params, "api_key": self.api_key},
+            response_error=_artist_api_error,
+            secrets=(self.api_key,),
+        )
+        payload = response.payload
+        container, field = (
+            ("toptags", "tag")
+            if method == "artist.getTopTags"
+            else ("similarartists", "artist")
+        )
+        block = payload.get(container) if isinstance(payload, dict) else None
+        items = block.get(field) if isinstance(block, dict) else None
+        if (
+            isinstance(items, dict)
+            and isinstance(items.get("name"), str)
+            and items["name"]
+        ):
+            items = [items]
+        if not isinstance(items, list) or any(
+            not isinstance(item, dict)
+            or not isinstance(item.get("name"), str)
+            or not item["name"]
+            for item in items
+        ):
+            raise HttpRequestError(
+                "GET",
+                self.base_url,
+                response.status_code,
+                "Malformed artist response",
+                payload=payload,
+                attempts=response.attempts,
+            )
+        return ArtistMetadataResponse(
+            "success" if items else "empty",
+            payload,
+            response.status_code,
+            response.attempts,
+        )
+
     def get_user_info(self) -> Dict[str, Any]:
         params = {
             "method": "user.getinfo",
-            "user": self.username,
+            "user": self._require_username(),
             "api_key": self.api_key,
             "format": "json",
         }
@@ -197,7 +293,7 @@ class LastFMClient:
     ) -> Dict[str, Any]:
         params: Dict[str, Any] = {
             "method": "user.getrecenttracks",
-            "user": self.username,
+            "user": self._require_username(),
             "api_key": self.api_key,
             "format": "json",
             "limit": limit,
@@ -303,3 +399,38 @@ def _page_overlap(
         if left == right:
             return True
     return False
+
+
+def artist_metadata_params(
+    method: str,
+    artist: ArtistInput,
+    *,
+    autocorrect: bool = False,
+    limit: int | None = None,
+) -> dict[str, Any]:
+    params = {"method": method, "format": "json", "autocorrect": int(autocorrect)}
+    params.update(
+        {"mbid": artist.mbid} if artist.mbid else {"artist": artist.artist_name}
+    )
+    if limit is not None:
+        params["limit"] = limit
+    return params
+
+
+def _artist_api_error(response: JsonResponse) -> HttpRequestError | None:
+    payload = response.payload
+    if not isinstance(payload, dict) or "error" not in payload:
+        return None
+    try:
+        code = int(payload["error"])
+    except (TypeError, ValueError):
+        code = None
+    return HttpRequestError(
+        "GET",
+        "",
+        message="Last.fm API error",
+        payload=payload,
+        provider_code=code,
+        retryable=code in {8, 11, 16, 29},
+        fatal=code in {2, 3, 4, 5, 9, 10, 13, 26},
+    )

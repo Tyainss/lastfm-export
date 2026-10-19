@@ -28,6 +28,7 @@ class ProgressReporter:
         )
         self._last_update: float | None = None
         self._live_line = False
+        self._live_width = 0
 
     def start(self, message: str) -> None:
         self._write_line(message)
@@ -42,7 +43,8 @@ class ProgressReporter:
         self._last_update = now
 
         if self._interactive:
-            self._stream.write(f"\r{message}")
+            self._live_width = max(self._live_width, len(message))
+            self._stream.write(f"\r{message.ljust(self._live_width)}")
             self._stream.flush()
             self._live_line = True
             return
@@ -59,6 +61,7 @@ class ProgressReporter:
             self._stream.write("\n")
             self._stream.flush()
             self._live_line = False
+            self._live_width = 0
 
     def _write_line(self, message: str) -> None:
         if not self._enabled:

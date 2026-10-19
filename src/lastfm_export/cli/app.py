@@ -1,5 +1,6 @@
 import typer
 
+from lastfm_export.cli.commands_artists import enrich_artists_cmd
 from lastfm_export.cli.commands_enrich import enrich_app
 from lastfm_export.cli.commands_scrobbles import scrobbles_app
 
@@ -18,6 +19,7 @@ _try_load_dotenv()
 app = typer.Typer(no_args_is_help=True)
 app.add_typer(scrobbles_app, name="scrobbles")
 app.add_typer(enrich_app, name="enrich")
+enrich_app.command("artists")(enrich_artists_cmd)
 
 
 def main() -> None:

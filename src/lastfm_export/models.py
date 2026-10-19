@@ -1,5 +1,6 @@
-from dataclasses import dataclass
+from dataclasses import asdict, dataclass
 from typing import Any
+from uuid import UUID
 
 
 @dataclass(frozen=True, slots=True)
@@ -75,3 +76,61 @@ class EnrichedScrobble:
         else:
             base["spotify"] = self.spotify.to_record(include_raw=include_raw)
         return base
+
+
+@dataclass(frozen=True, slots=True)
+class ArtistInput:
+    """Caller-supplied name and optional artist MBID; no identity inference."""
+
+    artist_name: str
+    mbid: str | None = None
+
+    def __post_init__(self) -> None:
+        if not isinstance(self.artist_name, str) or not self.artist_name.strip():
+            raise ValueError("artist_name must be a nonblank string")
+        if self.mbid is not None:
+            if not isinstance(self.mbid, str):
+                raise ValueError("mbid must be an artist UUID string")
+            try:
+                valid = str(UUID(self.mbid)) == self.mbid.lower()
+            except ValueError:
+                valid = False
+            if not valid:
+                raise ValueError("mbid must be an artist UUID string")
+
+    def to_record(self) -> dict[str, Any]:
+        return {"artist_name": self.artist_name, "mbid": self.mbid}
+
+
+@dataclass(frozen=True, slots=True)
+class ArtistMetadataResponse:
+    """Provider outcome without an assertion about artist identity or tag quality."""
+
+    status: str
+    raw_response: Any
+    http_status: int
+    wire_attempts: int
+
+
+@dataclass(frozen=True, slots=True)
+class ArtistMetadataResult:
+    schema_version: int
+    collection_id: str
+    request_id: str
+    attempt: int
+    input_artist: dict[str, Any]
+    provider: str
+    endpoint: str
+    base_url: str
+    request_params: dict[str, Any]
+    started_at: str
+    collected_at: str
+    status: str
+    http_status: int | None
+    provider_code: int | None
+    wire_attempts: int
+    raw_response: Any
+    error: dict[str, Any] | None
+
+    def to_record(self) -> dict[str, Any]:
+        return asdict(self)

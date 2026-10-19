@@ -14,10 +14,6 @@ class LastFMRecentTracksAccessError(LastFMExportError):
     """Raised when Last.fm denies access to a user's recent listening history."""
 
 
-class RateLimitError(LastFMExportError):
-    """Raised when the remote API rate-limits and we cannot recover."""
-
-
 @dataclass(slots=True)
 class HttpRequestError(LastFMExportError):
     """
@@ -31,7 +27,11 @@ class HttpRequestError(LastFMExportError):
     status_code: int | None = None
     message: str | None = None
     response_text: str | None = None
-    payload: dict[str, Any] | None = None
+    payload: Any = None
+    attempts: int = 1
+    retryable: bool = False
+    provider_code: int | None = None
+    fatal: bool = False
 
     def __str__(self) -> str:
         parts: list[str] = [f"{self.method} {self.url}"]
@@ -40,3 +40,11 @@ class HttpRequestError(LastFMExportError):
         if self.message:
             parts.append(self.message)
         return " | ".join(parts)
+
+
+class RateLimitError(HttpRequestError):
+    """Raised when the remote API rate-limits and we cannot recover."""
+
+
+class CollectionError(LastFMExportError):
+    """Raised when a metadata collection cannot be read or written safely."""
