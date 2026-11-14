@@ -30,6 +30,7 @@ from lastfm_export.models import (
 OPERATIONS = (
     "lastfm_tags",
     "lastfm_similar",
+    "lastfm_info",
     "musicbrainz_lookup",
     "musicbrainz_search",
 )
@@ -100,11 +101,11 @@ def _make_plan(artists: list[ArtistInput], settings: dict[str, Any]) -> dict[str
         for operation in operations:
             provider = operation.split("_", 1)[0]
             if operation.startswith("lastfm_"):
-                endpoint = (
-                    "artist.getTopTags"
-                    if operation == "lastfm_tags"
-                    else "artist.getSimilar"
-                )
+                endpoint = {
+                    "lastfm_tags": "artist.getTopTags",
+                    "lastfm_similar": "artist.getSimilar",
+                    "lastfm_info": "artist.getInfo",
+                }[operation]
                 params = artist_metadata_params(
                     endpoint,
                     artist,
@@ -112,6 +113,7 @@ def _make_plan(artists: list[ArtistInput], settings: dict[str, Any]) -> dict[str
                     limit=settings["similar_limit"]
                     if operation == "lastfm_similar"
                     else None,
+                    lang="en" if operation == "lastfm_info" else None,
                 )
             elif operation == "musicbrainz_lookup":
                 if not artist.mbid:
@@ -155,6 +157,12 @@ def _collect_request(
     if request["endpoint"] == "artist.getTopTags":
         return lastfm.get_artist_top_tags(
             **artist, autocorrect=bool(params["autocorrect"])
+        )
+    if request["endpoint"] == "artist.getInfo":
+        return lastfm.get_artist_info(
+            **artist,
+            autocorrect=bool(params["autocorrect"]),
+            lang=params["lang"],
         )
     if request["endpoint"] == "artist.getSimilar":
         return lastfm.get_similar_artists(
