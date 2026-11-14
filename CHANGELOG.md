@@ -2,6 +2,12 @@
 
 ## [Unreleased]
 
+## [0.5.0] - 2026-11-14
+
+### Added
+
+- Added artist biographies from Last.fm.
+
 ## [0.4.0] - 2026-10-19
 
 ### Added
