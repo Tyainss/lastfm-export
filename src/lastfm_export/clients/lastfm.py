@@ -56,6 +56,21 @@ class LastFMClient:
             autocorrect=autocorrect,
         )
 
+    def get_artist_info(
+        self,
+        *,
+        artist_name: str,
+        mbid: str | None = None,
+        autocorrect: bool = False,
+        lang: str = "en",
+    ) -> ArtistMetadataResponse:
+        return self._get_artist_metadata(
+            "artist.getInfo",
+            ArtistInput(artist_name, mbid),
+            autocorrect=autocorrect,
+            lang=lang,
+        )
+
     def get_similar_artists(
         self,
         *,
@@ -80,6 +95,7 @@ class LastFMClient:
         *,
         autocorrect: bool,
         limit: int | None = None,
+        lang: str | None = None,
     ) -> ArtistMetadataResponse:
         validate_base_url(self.base_url)
         if not isinstance(autocorrect, bool):
@@ -87,7 +103,7 @@ class LastFMClient:
         if not self.api_key or not self.api_key.strip():
             raise ConfigError("A Last.fm API key is required")
         params = artist_metadata_params(
-            method, artist, autocorrect=autocorrect, limit=limit
+            method, artist, autocorrect=autocorrect, limit=limit, lang=lang
         )
         response = self.http.get_response(
             self.base_url,
@@ -96,6 +112,41 @@ class LastFMClient:
             secrets=(self.api_key,),
         )
         payload = response.payload
+        if method == "artist.getInfo":
+            artist_info = payload.get("artist") if isinstance(payload, dict) else None
+            if not isinstance(artist_info, dict) or not isinstance(
+                artist_info.get("name"), str
+            ):
+                raise HttpRequestError(
+                    "GET",
+                    self.base_url,
+                    response.status_code,
+                    "Malformed artist info response",
+                    payload=payload,
+                    attempts=response.attempts,
+                )
+            bio = artist_info.get("bio") or {}
+            if not isinstance(bio, dict) or any(
+                bio.get(field) is not None and not isinstance(bio[field], str)
+                for field in ("summary", "content")
+            ):
+                raise HttpRequestError(
+                    "GET",
+                    self.base_url,
+                    response.status_code,
+                    "Malformed artist biography",
+                    payload=payload,
+                    attempts=response.attempts,
+                )
+            has_text = any(
+                (bio.get(field) or "").strip() for field in ("summary", "content")
+            )
+            return ArtistMetadataResponse(
+                "success" if has_text else "empty",
+                payload,
+                response.status_code,
+                response.attempts,
+            )
         container, field = (
             ("toptags", "tag")
             if method == "artist.getTopTags"
@@ -407,8 +458,13 @@ def artist_metadata_params(
     *,
     autocorrect: bool = False,
     limit: int | None = None,
+    lang: str | None = None,
 ) -> dict[str, Any]:
     params = {"method": method, "format": "json", "autocorrect": int(autocorrect)}
+    if lang is not None:
+        if not isinstance(lang, str) or not lang.strip():
+            raise ValueError("lang must be a nonempty string")
+        params["lang"] = lang
     params.update(
         {"mbid": artist.mbid} if artist.mbid else {"artist": artist.artist_name}
     )
