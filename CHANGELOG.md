@@ -4,6 +4,7 @@
 
 ### Fixed
 
+- Fixed in-place Spotify enrichment and preserved output files when enrichment fails.
 - Avoided scanning empty years when listening history predates registration.
 - Fixed verification failing when repeated listens cross page boundaries.
 - Fixed collecting connections from users with an empty following list.
