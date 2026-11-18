@@ -194,15 +194,36 @@ class LastFMClient:
         self, *, page_size: int = 50, limit: int | None = None
     ) -> Iterator[LastFMUser]:
         """Yield the connections returned by user.getFriends in API order."""
-        yield from self._iter_user_records(
-            method="user.getFriends",
-            container="friends",
-            field="user",
-            page_size=page_size,
-            limit=limit,
-            parse=_parse_user,
-            extra_params={"recenttracks": 0},
-        )
+        yielded = False
+        try:
+            for user in self._iter_user_records(
+                method="user.getFriends",
+                container="friends",
+                field="user",
+                page_size=page_size,
+                limit=limit,
+                parse=_parse_user,
+                extra_params={"recenttracks": 0},
+            ):
+                yielded = True
+                yield user
+        except HttpRequestError as error:
+            if (
+                yielded
+                or error.provider_code != 6
+                or error.status_code not in {200, 400}
+                or not isinstance(error.payload, dict)
+                or error.payload.get("message") != "no such page"
+            ):
+                raise
+            # Last.fm reports an empty first page this way, but the user may
+            # also have disappeared. Confirm identity before returning no users.
+            name = self.get_user_info()["user"].get("name")
+            if (
+                not isinstance(name, str)
+                or name.casefold() != self._require_username().casefold()
+            ):
+                raise
 
     def iter_user_top_artists(
         self,

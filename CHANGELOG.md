@@ -5,6 +5,8 @@
 ### Fixed
 
 - Avoided scanning empty years when listening history predates registration.
+- Fixed verification failing when repeated listens cross page boundaries.
+- Fixed collecting connections from users with an empty following list.
 
 ## [0.6.0] - 2026-11-18
 

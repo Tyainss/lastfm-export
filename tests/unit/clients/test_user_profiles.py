@@ -309,3 +309,82 @@ def test_permanent_provider_error_is_redacted(operation):
     assert "private-key" not in str(caught.value)
     assert "private-key" not in repr(caught.value.payload)
     assert len(responses.calls) == 1
+
+
+@pytest.mark.parametrize("status", [200, 400])
+@responses.activate
+def test_empty_friends_error_confirms_user_before_returning_empty(status):
+    responses.get(URL, status=status, json={"error": 6, "message": "no such page"})
+    responses.get(URL, json={"user": {"name": "listener"}})
+    assert list(records("friends")) == []
+    assert len(responses.calls) == 2
+    assert responses.calls[1].request.params["method"] == "user.getinfo"
+
+
+@responses.activate
+def test_missing_user_is_not_treated_as_empty_friends():
+    responses.get(URL, status=400, json={"error": 6, "message": "no such page"})
+    responses.get(URL, status=400, json={"error": 6, "message": "User not found"})
+    with pytest.raises(HttpRequestError) as caught:
+        list(records("friends"))
+    assert caught.value.provider_code == 6
+    assert caught.value.payload["message"] == "User not found"
+
+
+@pytest.mark.parametrize("user", [{"name": "other"}, {}, {"name": None}])
+@responses.activate
+def test_unconfirmed_identity_is_not_treated_as_empty_friends(user):
+    responses.get(URL, status=400, json={"error": 6, "message": "no such page"})
+    responses.get(URL, json={"user": user})
+    with pytest.raises(HttpRequestError) as caught:
+        list(records("friends"))
+    assert caught.value.payload["message"] == "no such page"
+
+
+@responses.activate
+def test_later_missing_friends_page_remains_an_error():
+    responses.get(
+        URL, json=payload("friends", [item("A", "friends")], pages=2, total=2)
+    )
+    responses.get(URL, status=400, json={"error": 6, "message": "no such page"})
+    iterator = records("friends", page_size=1)
+    assert next(iterator).username == "A"
+    with pytest.raises(HttpRequestError):
+        next(iterator)
+    assert len(responses.calls) == 2
+
+
+@pytest.mark.parametrize("operation", OPERATIONS)
+@responses.activate
+def test_other_invalid_parameters_do_not_trigger_empty_friends_handling(operation):
+    responses.get(URL, status=400, json={"error": 6, "message": "Invalid parameters"})
+    with pytest.raises(HttpRequestError):
+        list(records(operation))
+    assert len(responses.calls) == 1
+
+
+@responses.activate
+def test_empty_page_error_does_not_hide_user_verification_failure():
+    responses.get(URL, status=400, json={"error": 6, "message": "no such page"})
+    responses.get(URL, json={"error": 10, "message": "Invalid private-key"})
+    with pytest.raises(HttpRequestError) as caught:
+        list(records("friends"))
+    assert caught.value.fatal
+    assert "private-key" not in str(caught.value)
+    assert "private-key" not in repr(caught.value.payload)
+
+
+@responses.activate
+def test_top_artists_error_is_not_treated_as_empty_friends():
+    responses.get(URL, status=400, json={"error": 6, "message": "no such page"})
+    with pytest.raises(HttpRequestError):
+        list(records("top_artists"))
+    assert len(responses.calls) == 1
+
+
+@responses.activate
+def test_server_error_is_not_treated_as_empty_friends():
+    responses.get(URL, status=503, json={"error": 6, "message": "no such page"})
+    with pytest.raises(HttpRequestError):
+        list(records("friends"))
+    assert len(responses.calls) == 1
