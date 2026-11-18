@@ -2,6 +2,16 @@
 
 ## [Unreleased]
 
+### Added
+
+- Added monthly listening-history collection in Python.
+- Added optional delays between API requests.
+
+### Fixed
+
+- Fixed exports missing listens at the requested end time.
+- Fixed Last.fm errors being treated as empty listening histories.
+
 ## [0.5.0] - 2026-11-14
 
 ### Added
