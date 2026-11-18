@@ -1,7 +1,8 @@
+import hashlib
 import json
 import logging
 from collections.abc import Callable
-from typing import Any, Dict, Iterator, Optional
+from typing import Any, Dict, Iterator, Optional, TypeVar
 
 from lastfm_export.clients.http import HttpClient, JsonResponse, validate_base_url
 from lastfm_export.errors import (
@@ -10,9 +11,16 @@ from lastfm_export.errors import (
     LastFMRecentTracksAccessError,
 )
 from lastfm_export.integrity import WindowReport, WindowResult
-from lastfm_export.models import ArtistInput, ArtistMetadataResponse, Scrobble
+from lastfm_export.models import (
+    ArtistInput,
+    ArtistMetadataResponse,
+    LastFMUser,
+    Scrobble,
+    UserTopArtist,
+)
 
 logger = logging.getLogger(__name__)
+_UserRecord = TypeVar("_UserRecord")
 
 
 class LastFMClient:
@@ -180,6 +188,137 @@ class LastFMClient:
             response.status_code,
             response.attempts,
         )
+
+    def iter_user_friends(
+        self, *, page_size: int = 50, limit: int | None = None
+    ) -> Iterator[LastFMUser]:
+        """Yield the connections returned by user.getFriends in API order."""
+        yield from self._iter_user_records(
+            method="user.getFriends",
+            container="friends",
+            field="user",
+            page_size=page_size,
+            limit=limit,
+            parse=_parse_user,
+            extra_params={"recenttracks": 0},
+        )
+
+    def iter_user_top_artists(
+        self,
+        *,
+        period: str = "overall",
+        page_size: int = 50,
+        limit: int | None = None,
+    ) -> Iterator[UserTopArtist]:
+        """Yield a user's ranked artists; limit caps the total records returned."""
+        if not isinstance(period, str) or period not in {
+            "overall",
+            "7day",
+            "1month",
+            "3month",
+            "6month",
+            "12month",
+        }:
+            raise ValueError("Unsupported top-artists period")
+        yield from self._iter_user_records(
+            method="user.getTopArtists",
+            container="topartists",
+            field="artist",
+            page_size=page_size,
+            limit=limit,
+            parse=_parse_user_artist,
+            extra_params={"period": period},
+        )
+
+    def _iter_user_records(
+        self,
+        *,
+        method: str,
+        container: str,
+        field: str,
+        page_size: int,
+        limit: int | None,
+        parse: Callable[[dict[str, Any]], _UserRecord],
+        extra_params: dict[str, Any],
+    ) -> Iterator[_UserRecord]:
+        if type(page_size) is not int or page_size < 1:
+            raise ValueError("page_size must be a positive integer")
+        if limit is not None and (type(limit) is not int or limit < 1):
+            raise ValueError("limit must be a positive integer or None")
+        username = self._require_username()
+        request_size = min(page_size, limit) if limit is not None else page_size
+        page = 1
+        yielded = 0
+        expected_totals = None
+        seen_pages: set[str] = set()
+        while True:
+            payload = self._get_user_payload(
+                {
+                    "method": method,
+                    "user": username,
+                    "api_key": self.api_key,
+                    "format": "json",
+                    "page": page,
+                    "limit": request_size,
+                    **extra_params,
+                },
+                container=container,
+            )
+            block = payload[container]
+            try:
+                attrs = block["@attr"]
+                if not isinstance(attrs, dict):
+                    raise ValueError("Invalid pagination metadata")
+                pages = _user_count(attrs["totalPages"])
+                total = _user_count(attrs["total"])
+                if (total > 0 and pages == 0) or (total == 0 and pages > 1):
+                    raise ValueError("Inconsistent pagination totals")
+                if (
+                    "page" in attrs
+                    and _user_count(attrs["page"], positive=True) != page
+                ):
+                    raise ValueError("Unexpected page number")
+                if "user" in attrs and (
+                    not isinstance(attrs["user"], str)
+                    or attrs["user"].casefold() != username.casefold()
+                ):
+                    raise ValueError("Response belongs to another user")
+                totals = (pages, total)
+                if expected_totals is not None and totals != expected_totals:
+                    raise ValueError("Pagination totals changed")
+                expected_totals = totals
+                items = block[field]
+                if isinstance(items, dict):
+                    items = [items]
+                if not isinstance(items, list):
+                    raise ValueError("Invalid record list")
+                records = [parse(item) for item in items]
+                if not records and (total != 0 or page < pages):
+                    raise ValueError("Empty page before the reported end")
+                if records and (total == 0 or yielded + len(records) > total):
+                    raise ValueError("Records exceed the reported total")
+                signature = hashlib.sha256(
+                    json.dumps(items, sort_keys=True, ensure_ascii=False).encode(
+                        "utf-8"
+                    )
+                ).hexdigest()
+                if records and signature in seen_pages:
+                    raise ValueError("Repeated page")
+                if page >= pages and yielded + len(records) != total:
+                    raise ValueError("Record count differs from the reported total")
+            except (KeyError, TypeError, ValueError) as exc:
+                raise HttpRequestError(
+                    "GET", self.base_url, message=f"Invalid {method} response: {exc}"
+                ) from None
+            seen_pages.add(signature)
+            for record in records:
+                yield record
+                yielded += 1
+                if limit is not None and yielded >= limit:
+                    return
+            if page >= pages:
+                return
+            page += 1
 
     def get_user_info(self) -> Dict[str, Any]:
         params = {
@@ -525,6 +664,44 @@ class LastFMClient:
             mbid=str(mbid) if mbid is not None and str(mbid) else None,
             raw=item,
         )
+
+
+def _user_count(value: Any, *, positive: bool = False) -> int:
+    if type(value) is not int and not (isinstance(value, str) and value.isdecimal()):
+        raise ValueError("Expected an integer count")
+    count = int(value)
+    if count < (1 if positive else 0):
+        raise ValueError("Count is out of range")
+    return count
+
+
+def _user_name(item: dict[str, Any]) -> str:
+    if (
+        not isinstance(item, dict)
+        or not isinstance(item.get("name"), str)
+        or not item["name"].strip()
+    ):
+        raise ValueError("Missing or invalid name")
+    return item["name"]
+
+
+def _parse_user(item: dict[str, Any]) -> LastFMUser:
+    return LastFMUser(username=_user_name(item), raw=item)
+
+
+def _parse_user_artist(item: dict[str, Any]) -> UserTopArtist:
+    name = _user_name(item)
+    playcount = _user_count(item["playcount"])
+    attrs = item.get("@attr", {})
+    if not isinstance(attrs, dict):
+        raise ValueError("Invalid artist rank metadata")
+    rank = _user_count(attrs["rank"], positive=True) if "rank" in attrs else None
+    mbid = item.get("mbid")
+    if mbid is not None and not isinstance(mbid, str):
+        raise ValueError("Invalid artist MBID")
+    return UserTopArtist(
+        artist_name=name, playcount=playcount, rank=rank, mbid=mbid or None, raw=item
+    )
 
 
 def _page_overlap(
