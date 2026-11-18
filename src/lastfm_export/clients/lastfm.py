@@ -108,7 +108,7 @@ class LastFMClient:
         response = self.http.get_response(
             self.base_url,
             params={**params, "api_key": self.api_key},
-            response_error=_artist_api_error,
+            response_error=_lastfm_api_error,
             secrets=(self.api_key,),
         )
         payload = response.payload
@@ -188,7 +188,32 @@ class LastFMClient:
             "api_key": self.api_key,
             "format": "json",
         }
-        return self.http.get_json(self.base_url, params=params)
+        return self._get_user_payload(params, container="user")
+
+    def _get_user_payload(
+        self, params: Dict[str, Any], *, container: str
+    ) -> Dict[str, Any]:
+        validate_base_url(self.base_url)
+        if not self.api_key or not self.api_key.strip():
+            raise ConfigError("A Last.fm API key is required")
+        response = self.http.get_response(
+            self.base_url,
+            params=params,
+            response_error=_lastfm_api_error,
+            secrets=(self.api_key,),
+        )
+        payload = response.payload
+        if not isinstance(payload, dict) or not isinstance(
+            payload.get(container), dict
+        ):
+            raise HttpRequestError(
+                "GET",
+                self.base_url,
+                response.status_code,
+                f"Malformed Last.fm {container} response",
+                attempts=response.attempts,
+            )
+        return payload
 
     def get_user_registration_unix(self) -> Optional[int]:
         """Return the account registration timestamp when Last.fm exposes it."""
@@ -206,6 +231,8 @@ class LastFMClient:
         """Fetch one bounded window while collecting integrity evidence."""
         if page_size <= 0:
             raise ValueError("page_size must be > 0")
+        if from_unix > to_unix:
+            raise ValueError("from_unix must not exceed to_unix")
 
         report = WindowReport(from_unix=from_unix, to_unix=to_unix)
         scrobbles: list[Scrobble] = []
@@ -288,6 +315,8 @@ class LastFMClient:
         """
         if page_size <= 0:
             raise ValueError("page_size must be > 0")
+        if from_unix is not None and to_unix is not None and from_unix > to_unix:
+            raise ValueError("from_unix must not exceed to_unix")
 
         page = 1
         pages_seen = 0
@@ -353,12 +382,40 @@ class LastFMClient:
         if from_unix is not None:
             params["from"] = int(from_unix)
         if to_unix is not None:
-            params["to"] = int(to_unix)
+            # The API excludes `to`; the public Python interface includes it.
+            params["to"] = int(to_unix) + 1
 
         try:
-            return self.http.get_json(self.base_url, params=params)
+            payload = self._get_user_payload(params, container="recenttracks")
+            recent = payload["recenttracks"]
+            tracks = recent.get("track")
+            if not isinstance(tracks, (list, dict)) or (
+                isinstance(tracks, list)
+                and any(not isinstance(item, dict) for item in tracks)
+            ):
+                raise HttpRequestError(
+                    "GET", self.base_url, message="Malformed Last.fm track list"
+                )
+            attributes = recent.get("@attr", {})
+            if not isinstance(attributes, dict):
+                raise HttpRequestError(
+                    "GET",
+                    self.base_url,
+                    message="Malformed Last.fm pagination metadata",
+                )
+            returned_user = attributes.get("user")
+            if returned_user is not None and (
+                not isinstance(returned_user, str)
+                or returned_user.casefold() != self._require_username().casefold()
+            ):
+                raise HttpRequestError(
+                    "GET", self.base_url, message="Last.fm returned a different user"
+                )
+            return payload
         except HttpRequestError as e:
-            if e.status_code == 403 and e.payload and e.payload.get("error") == 17:
+            if e.provider_code == 17 or (
+                isinstance(e.payload, dict) and str(e.payload.get("error")) == "17"
+            ):
                 raise LastFMRecentTracksAccessError(
                     "Last.fm denied access to this account's recent listening history. "
                     "Check that 'Hide recent listening information' is disabled "
@@ -440,14 +497,10 @@ def _page_overlap(
 ) -> bool:
     """Detect any exact raw suffix/prefix overlap without deduplicating it."""
     max_overlap = min(len(previous), len(current))
+    left = [json.dumps(item, ensure_ascii=False, sort_keys=True) for item in previous]
+    right = [json.dumps(item, ensure_ascii=False, sort_keys=True) for item in current]
     for size in range(1, max_overlap + 1):
-        left = [
-            json.dumps(x, ensure_ascii=False, sort_keys=True) for x in previous[-size:]
-        ]
-        right = [
-            json.dumps(x, ensure_ascii=False, sort_keys=True) for x in current[:size]
-        ]
-        if left == right:
+        if left[-size:] == right[:size]:
             return True
     return False
 
@@ -473,7 +526,7 @@ def artist_metadata_params(
     return params
 
 
-def _artist_api_error(response: JsonResponse) -> HttpRequestError | None:
+def _lastfm_api_error(response: JsonResponse) -> HttpRequestError | None:
     payload = response.payload
     if not isinstance(payload, dict) or "error" not in payload:
         return None
