@@ -39,6 +39,49 @@ def _records():
 
 
 @pytest.mark.parametrize("mode", ["verified", "fast"])
+@pytest.mark.parametrize("bounds", [["--from-unix", "86400"], ["--to-unix", "1"]])
+def test_invalid_final_bounds_preserve_existing_output(
+    monkeypatch, tmp_path, mode, bounds
+):
+    monkeypatch.setattr(
+        "lastfm_export.cli.commands_scrobbles.LastFMClient", _FakeLastFMClient
+    )
+    monkeypatch.setattr("lastfm_export.cli.commands_scrobbles.time.time", lambda: 200)
+    monkeypatch.setattr(
+        "lastfm_export.cli.commands_scrobbles.collect_verified_scrobbles",
+        lambda **_: pytest.fail("Invalid bounds must not fetch history"),
+    )
+    monkeypatch.setattr(
+        "lastfm_export.cli.commands_scrobbles.export_scrobbles",
+        lambda **_: pytest.fail("Invalid bounds must not fetch history"),
+    )
+    out = tmp_path / "existing.ndjson"
+    out.write_bytes(b"previous history")
+    result = runner.invoke(
+        app,
+        [
+            "scrobbles",
+            "export",
+            "--out",
+            str(out),
+            "--overwrite",
+            "--api-key",
+            "test",
+            "--username",
+            "u",
+            "--progress",
+            "off",
+            "--acquisition-mode",
+            mode,
+            *bounds,
+        ],
+    )
+    assert result.exit_code != 0
+    assert "from is greater than to" in str(result.exception)
+    assert out.read_bytes() == b"previous history"
+
+
+@pytest.mark.parametrize("mode", ["verified", "fast"])
 def test_full_cli_export_includes_listens_before_registration(
     monkeypatch, tmp_path, mode
 ):

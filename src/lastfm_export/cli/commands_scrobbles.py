@@ -154,6 +154,8 @@ def export_cmd(
         except LastFMRecentTracksAccessError as e:
             typer.echo(f"Error: {e}", err=True)
             raise typer.Exit(code=1) from e
+    if snapshot_from > snapshot_to:
+        raise ConfigError("Invalid time window: from is greater than to.")
 
     progress_reporter.start(
         f"Starting {mode} export: {_utc_date(snapshot_from)} to {_utc_date(snapshot_to)} UTC"

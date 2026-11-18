@@ -4,6 +4,7 @@
 
 ### Fixed
 
+- Rejected invalid export date ranges before replacing output files.
 - Included listens before registration in full command-line exports.
 - Fixed in-place Spotify enrichment and preserved output files when enrichment fails.
 - Avoided scanning empty years when listening history predates registration.

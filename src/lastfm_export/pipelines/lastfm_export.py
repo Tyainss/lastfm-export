@@ -105,6 +105,8 @@ def collect_verified_scrobbles(
     on_window_complete: Optional[Callable[[VerifiedProgress], None]] = None,
 ) -> tuple[list[Scrobble], list[WindowReport]]:
     """Collect newest-to-oldest UTC-day windows with validation reports."""
+    if from_unix > to_unix:
+        raise ValueError("from_unix must not exceed to_unix")
     records: list[Scrobble] = []
     reports: list[WindowReport] = []
     day = datetime.fromtimestamp(to_unix, timezone.utc).date()
