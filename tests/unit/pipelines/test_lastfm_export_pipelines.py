@@ -1,9 +1,13 @@
 from typing import Iterator, Optional
+from datetime import datetime, timezone
+
+import pytest
 
 from lastfm_export.models import Scrobble
 from lastfm_export.integrity import WindowReport, WindowResult
 from lastfm_export.pipelines.lastfm_export import collect_verified_scrobbles
 from lastfm_export.pipelines.lastfm_export import export_scrobbles
+from lastfm_export.pipelines.lastfm_export import iter_utc_windows
 
 
 class _FakeLastFMClient:
@@ -154,3 +158,37 @@ def test_collect_verified_scrobbles_reports_window_start_and_completion():
 
     assert started == [("1970-01-02", 0, 0), ("1970-01-01", 1, 1)]
     assert completed == [("1970-01-02", 1, 1), ("1970-01-01", 2, 2)]
+
+
+def test_month_windows_cover_leap_day_and_year_boundary_without_gaps():
+    def ts(year, month, day):
+        return int(datetime(year, month, day, tzinfo=timezone.utc).timestamp())
+
+    first, last = ts(2023, 12, 31), ts(2024, 3, 1)
+    windows = list(iter_utc_windows(from_unix=first, to_unix=last, period="month"))
+    assert windows == [
+        (last, last),
+        (ts(2024, 2, 1), last - 1),
+        (ts(2024, 1, 1), ts(2024, 2, 1) - 1),
+        (first, ts(2024, 1, 1) - 1),
+    ]
+    assert sum(end - start + 1 for start, end in windows) == last - first + 1
+
+
+def test_day_windows_clip_partial_days():
+    assert list(iter_utc_windows(from_unix=1, to_unix=86_400)) == [
+        (86_400, 86_400),
+        (1, 86_399),
+    ]
+
+
+@pytest.mark.parametrize(
+    "kwargs",
+    [
+        {"from_unix": 2, "to_unix": 1},
+        {"from_unix": 1, "to_unix": 2, "period": "year"},
+    ],
+)
+def test_window_planning_rejects_invalid_configuration(kwargs):
+    with pytest.raises(ValueError):
+        list(iter_utc_windows(**kwargs))

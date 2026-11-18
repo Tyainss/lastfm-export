@@ -1,9 +1,15 @@
 from typing import Any, Dict, List
 
 import pytest
+import responses
 
-from lastfm_export.clients.lastfm import LastFMClient
-from lastfm_export.errors import HttpRequestError, LastFMRecentTracksAccessError
+from lastfm_export.clients.lastfm import LastFMClient, _page_overlap
+from lastfm_export.clients.http import HttpClient, JsonResponse, RetryConfig
+from lastfm_export.errors import (
+    ConfigError,
+    HttpRequestError,
+    LastFMRecentTracksAccessError,
+)
 from lastfm_export.models import Scrobble
 
 
@@ -12,18 +18,18 @@ class _FakeHttp:
         self._pages = pages
         self.calls: List[Dict[str, Any]] = []
 
-    def get_json(self, url: str, *, params=None, headers=None) -> Dict[str, Any]:
+    def get_response(self, url: str, *, params=None, headers=None, **kwargs):
         self.calls.append({"url": url, "params": params, "headers": headers})
         if not self._pages:
             raise AssertionError("No more fake pages configured")
-        return self._pages.pop(0)
+        return JsonResponse(self._pages.pop(0), 200, 1)
 
 
 class _FailingHttp:
     def __init__(self, error: HttpRequestError) -> None:
         self._error = error
 
-    def get_json(self, url: str, *, params=None, headers=None) -> Dict[str, Any]:
+    def get_response(self, url: str, **kwargs):
         raise self._error
 
 
@@ -280,3 +286,198 @@ def test_get_user_registration_unix_reads_lastfm_registered_timestamp():
     client = LastFMClient(api_key="k", username="u", user_agent="ua", http=http)
 
     assert client.get_user_registration_unix() == 123
+
+
+def test_verified_day_windows_include_final_seconds_without_overlap():
+    from lastfm_export.pipelines.lastfm_export import collect_verified_scrobbles
+
+    timestamps = [172_799, 86_400, 86_399, 86_399, 0]
+
+    class RangeHttp:
+        def get_response(self, url, *, params, **kwargs):
+            # Model the API's inclusive `from` and exclusive `to`.
+            tracks = [
+                _window_track(ts, str(ts))
+                for ts in timestamps
+                if params["from"] <= ts < params["to"]
+            ]
+            return JsonResponse(
+                {
+                    "recenttracks": {
+                        "@attr": {"total": str(len(tracks)), "totalPages": "1"},
+                        "track": tracks,
+                    }
+                },
+                200,
+                1,
+            )
+
+    client = LastFMClient(
+        api_key="k", username="u", user_agent="tests", http=RangeHttp()
+    )
+    records, reports = collect_verified_scrobbles(
+        lastfm=client, from_unix=0, to_unix=172_799
+    )
+    assert [record.timestamp_unix for record in records] == timestamps
+    assert all(report.ok for report in reports)
+    single = client.fetch_recent_tracks_window(from_unix=86_400, to_unix=86_400)
+    assert single.report.ok
+    assert [record.timestamp_unix for record in single.scrobbles] == [86_400]
+
+
+@responses.activate
+@pytest.mark.parametrize("code", [8, 11, 16, 29])
+@pytest.mark.parametrize("operation", ["info", "history"])
+def test_user_api_errors_are_retried_even_with_http_200(code, operation):
+    url = "https://ws.audioscrobbler.com/2.0/"
+    responses.get(url, json={"error": code, "message": "Temporary failure"})
+    payload = (
+        {"user": {"registered": {"unixtime": "1"}}}
+        if operation == "info"
+        else {"recenttracks": {"@attr": {"totalPages": "1"}, "track": []}}
+    )
+    responses.get(url, json=payload)
+    client = LastFMClient(
+        api_key="key",
+        username="u",
+        user_agent="tests",
+        http=HttpClient(
+            user_agent="tests",
+            retry=RetryConfig(
+                max_attempts=2,
+                backoff_base_secs=0,
+                jitter_ratio=0,
+            ),
+        ),
+    )
+    if operation == "info":
+        assert client.get_user_registration_unix() == 1
+    else:
+        assert list(client.iter_recent_tracks()) == []
+    assert len(responses.calls) == 2
+
+
+@responses.activate
+def test_user_invalid_key_is_fatal_and_redacted_without_retry():
+    secret = "private-api-key"
+    responses.get(
+        "https://ws.audioscrobbler.com/2.0/",
+        json={
+            "error": 10,
+            "message": f"Invalid key {secret}",
+            "api_key": secret,
+        },
+    )
+    client = LastFMClient(api_key=secret, username="u", user_agent="tests")
+    with pytest.raises(HttpRequestError) as caught:
+        client.get_user_info()
+    assert caught.value.fatal
+    assert caught.value.provider_code == 10
+    assert secret not in str(caught.value)
+    assert secret not in repr(caught.value.payload)
+    assert len(responses.calls) == 1
+
+
+@responses.activate
+def test_hidden_history_error_is_recognized_with_http_200():
+    responses.get("https://ws.audioscrobbler.com/2.0/", json={"error": 17})
+    client = LastFMClient(api_key="key", username="u", user_agent="tests")
+    with pytest.raises(LastFMRecentTracksAccessError):
+        list(client.iter_recent_tracks())
+
+
+@pytest.mark.parametrize(
+    "payload",
+    [
+        {},
+        [],
+        {"recenttracks": {}},
+        {"recenttracks": {"track": [None]}},
+        {"recenttracks": {"track": [], "@attr": None}},
+        {"recenttracks": {"track": [], "@attr": {"user": "other"}}},
+    ],
+)
+def test_invalid_history_cannot_be_mistaken_for_empty_success(payload):
+    client = LastFMClient(
+        api_key="key", username="u", user_agent="tests", http=_FakeHttp([payload])
+    )
+    with pytest.raises(HttpRequestError):
+        list(client.iter_recent_tracks())
+
+
+def test_reversed_window_is_rejected_before_requesting():
+    http = _FakeHttp([])
+    client = LastFMClient(api_key="key", username="u", user_agent="tests", http=http)
+    with pytest.raises(ValueError):
+        client.fetch_recent_tracks_window(from_unix=2, to_unix=1)
+    assert not http.calls
+
+
+@pytest.mark.parametrize(
+    "previous,current,expected",
+    [
+        ([{"a": 1}, {"b": 2}], [{"b": 2}, {"c": 3}], True),
+        ([{"a": 1}, {"b": 2}], [{"a": 1}, {"c": 3}], False),
+        ([{"a": 1, "b": 2}], [{"b": 2, "a": 1}], True),
+        ([], [{"a": 1}], False),
+    ],
+)
+def test_page_overlap_preserves_suffix_prefix_matching(previous, current, expected):
+    assert _page_overlap(previous, current) is expected
+
+
+@pytest.mark.parametrize("total,expected", [("0", 100), ("5", 0)])
+def test_full_history_bound_checks_for_events_before_registration(total, expected):
+    http = _FakeHttp(
+        [
+            {"user": {"registered": {"unixtime": "100"}}},
+            {
+                "recenttracks": {
+                    "@attr": {"total": total},
+                    "track": [_window_track(20, "Older")] if int(total) else [],
+                }
+            },
+        ]
+    )
+    client = LastFMClient(api_key="key", username="u", user_agent="tests", http=http)
+    assert client.get_user_history_start_unix() == expected
+    assert http.calls[1]["params"]["from"] == 0
+    assert http.calls[1]["params"]["to"] == 100
+    assert http.calls[1]["params"]["limit"] == 1
+
+
+def test_full_history_bound_does_not_assume_an_omitted_total_is_zero():
+    http = _FakeHttp(
+        [
+            {"user": {"registered": {"unixtime": "100"}}},
+            {"recenttracks": {"track": []}},
+        ]
+    )
+    client = LastFMClient(api_key="key", username="u", user_agent="tests", http=http)
+    with pytest.raises(HttpRequestError, match="pre-registration"):
+        client.get_user_history_start_unix()
+
+
+def test_full_history_bound_requires_registration_metadata():
+    client = LastFMClient(
+        api_key="key", username="u", user_agent="tests", http=_FakeHttp([{"user": {}}])
+    )
+    with pytest.raises(ConfigError):
+        client.get_user_history_start_unix()
+
+
+def test_full_history_probe_rejects_contradictory_zero_total():
+    http = _FakeHttp(
+        [
+            {"user": {"registered": {"unixtime": "100"}}},
+            {
+                "recenttracks": {
+                    "@attr": {"total": "0"},
+                    "track": [_window_track(20, "Older")],
+                }
+            },
+        ]
+    )
+    client = LastFMClient(api_key="key", username="u", user_agent="tests", http=http)
+    with pytest.raises(HttpRequestError, match="Inconsistent"):
+        client.get_user_history_start_unix()
