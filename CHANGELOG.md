@@ -4,6 +4,7 @@
 
 ### Fixed
 
+- Included listens before registration in full command-line exports.
 - Fixed in-place Spotify enrichment and preserved output files when enrichment fails.
 - Avoided scanning empty years when listening history predates registration.
 - Fixed verification failing when repeated listens cross page boundaries.

@@ -149,9 +149,11 @@ def export_cmd(
         snapshot_to = int(time.time())
     snapshot_from = window.from_unix
     if snapshot_from is None:
-        snapshot_from = lastfm.get_user_registration_unix()
-    if snapshot_from is None:
-        raise ConfigError("Could not determine account registration time; use --from.")
+        try:
+            snapshot_from = lastfm.get_user_history_start_unix()
+        except LastFMRecentTracksAccessError as e:
+            typer.echo(f"Error: {e}", err=True)
+            raise typer.Exit(code=1) from e
 
     progress_reporter.start(
         f"Starting {mode} export: {_utc_date(snapshot_from)} to {_utc_date(snapshot_to)} UTC"
