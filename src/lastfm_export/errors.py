@@ -14,6 +14,17 @@ class LastFMRecentTracksAccessError(LastFMExportError):
     """Raised when Last.fm denies access to a user's recent listening history."""
 
 
+class ScrobbleIntegrityError(LastFMExportError):
+    """A bounded history window failed verification; its records are not usable."""
+
+    def __init__(self, report: Any) -> None:
+        self.report = report
+        super().__init__(
+            f"History window {report.from_unix}..{report.to_unix} failed verification: "
+            + "; ".join(report.violations)
+        )
+
+
 @dataclass(slots=True)
 class HttpRequestError(LastFMExportError):
     """

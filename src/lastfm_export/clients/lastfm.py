@@ -225,6 +225,41 @@ class LastFMClient:
         except (TypeError, ValueError):
             return None
 
+    def get_user_history_start_unix(self) -> int:
+        """Choose a full-history lower bound without assuming registration is earliest.
+
+        One small request checks for older scrobbles. If any exist, use the Unix
+        epoch as a conservative bound; otherwise registration avoids empty years.
+        """
+        registered = self.get_user_registration_unix()
+        if registered is None or registered < 0:
+            raise ConfigError("Could not determine the Last.fm registration timestamp")
+        if registered == 0:
+            return 0
+        payload = self._get_recent_tracks_page(
+            page=1, from_unix=0, to_unix=registered - 1, limit=1
+        )
+        total = self._extract_total(payload["recenttracks"])
+        if total is None or total < 0:
+            raise HttpRequestError(
+                "GET",
+                self.base_url,
+                message="Missing or invalid total in pre-registration history probe",
+            )
+        tracks = payload["recenttracks"]["track"]
+        if isinstance(tracks, dict):
+            tracks = [tracks]
+        has_dated_records = any(
+            self._parse_scrobble(item) is not None for item in tracks
+        )
+        if bool(total) != has_dated_records:
+            raise HttpRequestError(
+                "GET",
+                self.base_url,
+                message="Inconsistent pre-registration history probe",
+            )
+        return 0 if total else registered
+
     def fetch_recent_tracks_window(
         self, *, from_unix: int, to_unix: int, page_size: int = 200
     ) -> WindowResult:
