@@ -6,6 +6,7 @@
 
 - Added monthly listening-history collection in Python.
 - Added optional delays between API requests.
+- Added user connections and top artists in Python.
 
 ### Fixed
 
