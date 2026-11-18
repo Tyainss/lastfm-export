@@ -2,6 +2,8 @@
 
 ## [Unreleased]
 
+## [0.6.1] - 2026-11-19
+
 ### Fixed
 
 - Recognized existing Spotify information in CSV files with `--only-missing`.
