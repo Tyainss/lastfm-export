@@ -2,6 +2,8 @@
 
 ## [Unreleased]
 
+## [0.6.0] - 2026-11-18
+
 ### Added
 
 - Added monthly listening-history collection in Python.
