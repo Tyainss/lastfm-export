@@ -4,6 +4,7 @@
 
 ### Fixed
 
+- Preserved existing CSV columns when adding new listens.
 - Rejected invalid export date ranges before replacing output files.
 - Included listens before registration in full command-line exports.
 - Fixed in-place Spotify enrichment and preserved output files when enrichment fails.

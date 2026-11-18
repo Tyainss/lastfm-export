@@ -303,7 +303,8 @@ def _write_records_transactionally(*, out: Path, fmt: str, records: list[dict]) 
         elif fmt == "json":
             json_sink(temporary, overwrite=True)(records)
         elif fmt == "csv":
-            csv_sink(temporary, overwrite=True)(records)
+            columns = list(dict.fromkeys(key for record in records for key in record))
+            csv_sink(temporary, overwrite=True, fieldnames=columns)(records)
         else:
             raise ConfigError(f"Unsupported format: {fmt}")
         os.replace(temporary, out)

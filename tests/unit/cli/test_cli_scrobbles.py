@@ -1,4 +1,5 @@
 import json
+import csv
 from datetime import datetime, timezone
 from pathlib import Path
 
@@ -36,6 +37,60 @@ def _records():
             raw={"name": "T"},
         )
     ]
+
+
+def test_csv_resume_preserves_raw_and_enrichment_columns(monkeypatch, tmp_path):
+    out = tmp_path / "history.csv"
+    original = {
+        "artist_name": "A",
+        "track_name": "Old",
+        "album_name": "",
+        "timestamp_unix": "1",
+        "mbid": "",
+        "raw": json.dumps({"name": "Old"}),
+        "spotify": json.dumps({"spotify_track_id": "existing-id"}),
+    }
+    with out.open("w", newline="", encoding="utf-8") as stream:
+        writer = csv.DictWriter(stream, fieldnames=list(original))
+        writer.writeheader()
+        writer.writerow(original)
+    monkeypatch.setattr(
+        "lastfm_export.cli.commands_scrobbles.LastFMClient", _FakeLastFMClient
+    )
+
+    def collect(**kwargs):
+        assert kwargs["watermark"] == 1
+        return [Scrobble("A", "New", None, 2)], [_report()]
+
+    monkeypatch.setattr(
+        "lastfm_export.cli.commands_scrobbles.collect_verified_scrobbles", collect
+    )
+    result = runner.invoke(
+        app,
+        [
+            "scrobbles",
+            "export",
+            "--out",
+            str(out),
+            "--from-unix",
+            "0",
+            "--to-unix",
+            "10",
+            "--api-key",
+            "test",
+            "--username",
+            "u",
+            "--progress",
+            "off",
+        ],
+    )
+    assert result.exit_code == 0, result.output
+    with out.open(newline="", encoding="utf-8") as stream:
+        rows = list(csv.DictReader(stream))
+    assert len(rows) == 2
+    assert rows[1] == original
+    assert rows[0]["track_name"] == "New"
+    assert rows[0]["raw"] == rows[0]["spotify"] == ""
 
 
 @pytest.mark.parametrize("mode", ["verified", "fast"])
