@@ -2,6 +2,10 @@
 
 ## [Unreleased]
 
+### Fixed
+
+- Avoided scanning empty years when listening history predates registration.
+
 ## [0.6.0] - 2026-11-18
 
 ### Added

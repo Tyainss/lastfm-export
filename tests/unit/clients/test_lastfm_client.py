@@ -1,4 +1,5 @@
 from typing import Any, Dict, List
+from datetime import datetime, timezone
 
 import pytest
 import responses
@@ -480,4 +481,101 @@ def test_full_history_probe_rejects_contradictory_zero_total():
     )
     client = LastFMClient(api_key="key", username="u", user_agent="tests", http=http)
     with pytest.raises(HttpRequestError, match="Inconsistent"):
+        client.get_user_history_start_unix()
+
+
+@pytest.mark.parametrize(
+    "oldest",
+    [
+        datetime(2020, 2, 29, tzinfo=timezone.utc),
+        datetime(2020, 12, 1, tzinfo=timezone.utc),
+        datetime(2020, 1, 31, 23, 59, 59, tzinfo=timezone.utc),
+        datetime(1970, 1, 1, tzinfo=timezone.utc),
+    ],
+)
+def test_history_start_search_finds_first_month_without_scanning_empty_years(oldest):
+    registered = int(datetime(2024, 1, 1, tzinfo=timezone.utc).timestamp())
+    timestamps = [int(oldest.timestamp()), registered - 100]
+
+    class ProbeHttp:
+        def __init__(self):
+            self.calls = []
+
+        def get_response(self, url, *, params=None, **kwargs):
+            self.calls.append(params)
+            if params["method"] == "user.getinfo":
+                return JsonResponse(
+                    {"user": {"registered": {"unixtime": str(registered)}}}, 200, 1
+                )
+            assert params["page"] == params["limit"] == 1
+            assert params["from"] == 0
+            found = [timestamp for timestamp in timestamps if timestamp < params["to"]]
+            return JsonResponse(
+                {
+                    "recenttracks": {
+                        "@attr": {"total": str(len(found))},
+                        "track": [_window_track(max(found), "Song")] if found else [],
+                    }
+                },
+                200,
+                1,
+            )
+
+    http = ProbeHttp()
+    client = LastFMClient(api_key="key", username="u", user_agent="tests", http=http)
+    expected = int(
+        datetime(oldest.year, oldest.month, 1, tzinfo=timezone.utc).timestamp()
+    )
+    assert client.get_user_history_start_unix() == expected
+    assert len(http.calls) <= 12
+
+
+def test_history_search_rejects_inconsistent_mid_search_response():
+    registered = int(datetime(2024, 1, 1, tzinfo=timezone.utc).timestamp())
+    http = _FakeHttp(
+        [
+            {"user": {"registered": {"unixtime": str(registered)}}},
+            {
+                "recenttracks": {
+                    "@attr": {"total": "1"},
+                    "track": [_window_track(registered - 1, "Old")],
+                }
+            },
+            {"recenttracks": {"@attr": {"total": "1"}, "track": []}},
+        ]
+    )
+    client = LastFMClient(api_key="key", username="u", user_agent="tests", http=http)
+    with pytest.raises(HttpRequestError, match="Inconsistent"):
+        client.get_user_history_start_unix()
+
+
+def test_history_probe_rejects_events_outside_requested_interval():
+    http = _FakeHttp(
+        [
+            {"user": {"registered": {"unixtime": "100"}}},
+            {
+                "recenttracks": {
+                    "@attr": {"total": "1"},
+                    "track": [_window_track(100, "Out of range")],
+                }
+            },
+        ]
+    )
+    client = LastFMClient(api_key="key", username="u", user_agent="tests", http=http)
+    with pytest.raises(HttpRequestError, match="Inconsistent"):
+        client.get_user_history_start_unix()
+
+
+def test_zero_registration_is_rejected_instead_of_scanning_from_epoch():
+    client = LastFMClient(
+        api_key="key",
+        username="u",
+        user_agent="tests",
+        http=_FakeHttp(
+            [
+                {"user": {"registered": {"unixtime": "0"}}},
+            ]
+        ),
+    )
+    with pytest.raises(ConfigError):
         client.get_user_history_start_unix()
