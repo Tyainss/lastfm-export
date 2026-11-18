@@ -4,6 +4,7 @@
 
 ### Fixed
 
+- Recognized existing Spotify information in CSV files with `--only-missing`.
 - Preserved existing CSV columns when adding new listens.
 - Rejected invalid export date ranges before replacing output files.
 - Included listens before registration in full command-line exports.

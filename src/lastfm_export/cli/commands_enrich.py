@@ -1,4 +1,5 @@
 from dataclasses import dataclass
+import json
 import os
 import shutil
 from pathlib import Path
@@ -79,8 +80,24 @@ def _load_records(in_path: Path, fmt: str) -> Iterable[Record]:
     if fmt == "json":
         return read_json_records(in_path)
     if fmt == "csv":
-        return read_csv_records(in_path)
+        return _read_csv_scrobbles(in_path)
     raise ConfigError(f"Unsupported input format: {fmt}")
+
+
+def _read_csv_scrobbles(path: Path) -> Iterator[Record]:
+    for record in read_csv_records(path):
+        for field in ("raw", "spotify"):
+            if field not in record:
+                continue
+            text = record[field]
+            try:
+                value = json.loads(text) if text and text.strip() else None
+            except ValueError:
+                raise ConfigError(f"Invalid JSON in CSV '{field}' column") from None
+            if value is not None and not isinstance(value, dict):
+                raise ConfigError(f"CSV '{field}' must contain a JSON object or null")
+            record[field] = value
+        yield record
 
 
 def _resolve_sink(

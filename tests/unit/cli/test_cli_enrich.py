@@ -138,6 +138,108 @@ def test_inplace_ndjson_append_is_rejected_before_changing_input(tmp_path):
     assert path.read_bytes() == before
 
 
+@pytest.mark.parametrize("fmt", ["ndjson", "json", "csv"])
+def test_csv_only_missing_preserves_existing_nested_data(monkeypatch, tmp_path, fmt):
+    source = tmp_path / "input.csv"
+    out = tmp_path / f"enriched.{fmt}"
+    existing = {"spotify_track_id": "old-id", "raw": {"id": "old-id"}}
+    lastfm_raw = {"artist": {"#text": "A"}}
+    rows = [
+        {
+            "artist_name": "A",
+            "track_name": "Existing",
+            "timestamp_unix": 1,
+            "raw": lastfm_raw,
+            "spotify": existing,
+        },
+        {
+            "artist_name": "A",
+            "track_name": "Missing",
+            "timestamp_unix": 2,
+            "raw": None,
+            "spotify": None,
+        },
+    ]
+    csv_sink(source)(rows)
+    calls = []
+
+    class Spotify:
+        def __init__(self, **kwargs):
+            pass
+
+        def build_track_enrichment(self, *, track_name, artist_name):
+            calls.append(track_name)
+            return SpotifyTrackEnrichment("new-id", None, None, None)
+
+    monkeypatch.setattr("lastfm_export.cli.commands_enrich.SpotifyClient", Spotify)
+    result = runner.invoke(
+        app,
+        [
+            "enrich",
+            "spotify",
+            "--in",
+            str(source),
+            "--out",
+            str(out),
+            "--only-missing",
+            "--client-id",
+            "test",
+            "--client-secret",
+            "test",
+            "--progress",
+            "off",
+        ],
+    )
+    assert result.exit_code == 0, result.output
+    assert calls == ["Missing"]
+    readers = {
+        "ndjson": read_ndjson_records,
+        "json": read_json_records,
+        "csv": read_csv_records,
+    }
+    output = list(readers[fmt](out))
+    if fmt == "csv":
+        assert json.loads(output[0]["spotify"]) == existing
+        assert json.loads(output[0]["raw"]) == lastfm_raw
+        assert json.loads(output[1]["spotify"])["spotify_track_id"] == "new-id"
+    else:
+        assert output[0]["spotify"] == existing
+        assert output[0]["raw"] == lastfm_raw
+        assert output[1]["spotify"]["spotify_track_id"] == "new-id"
+
+
+@pytest.mark.parametrize("field", ["raw", "spotify"])
+@pytest.mark.parametrize("value", ["not json", "[]", "123"])
+def test_invalid_nested_csv_json_preserves_output(monkeypatch, tmp_path, field, value):
+    source = tmp_path / "input.csv"
+    csv_sink(source)(
+        [{"artist_name": "A", "track_name": "T", "timestamp_unix": 1, field: value}]
+    )
+    out = tmp_path / "output.ndjson"
+    out.write_bytes(b"previous output")
+    result = runner.invoke(
+        app,
+        [
+            "enrich",
+            "spotify",
+            "--in",
+            str(source),
+            "--out",
+            str(out),
+            "--overwrite",
+            "--client-id",
+            "test",
+            "--client-secret",
+            "test",
+            "--progress",
+            "off",
+        ],
+    )
+    assert result.exit_code != 0
+    assert field in str(result.exception)
+    assert out.read_bytes() == b"previous output"
+
+
 def test_record_rehydration_only_uses_explicit_raw_payloads():
     lastfm_raw = {"name": "T"}
     record = {

@@ -16,8 +16,6 @@ def test_verified_collector_rejects_reversed_bounds_before_fetching(start, end):
         collect_verified_scrobbles(lastfm=None, from_unix=start, to_unix=end)
 
 
-
-
 class _FakeLastFMClient:
     def __init__(self, items: list[Scrobble]) -> None:
         self._items = items
