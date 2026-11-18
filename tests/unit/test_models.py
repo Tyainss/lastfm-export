@@ -1,4 +1,26 @@
-from lastfm_export.models import EnrichedScrobble, Scrobble, SpotifyTrackEnrichment
+from lastfm_export.models import (
+    EnrichedScrobble,
+    LastFMUser,
+    Scrobble,
+    SpotifyTrackEnrichment,
+    UserTopArtist,
+)
+
+
+def test_user_profile_records_exclude_raw_by_default():
+    raw = {"name": "Listener"}
+    user = LastFMUser(username="Listener", raw=raw)
+    assert user.to_record() == {"username": "Listener"}
+    assert user.to_record(include_raw=True) == {"username": "Listener", "raw": raw}
+
+    artist = UserTopArtist(artist_name="Artist", playcount=12, rank=1, raw=raw)
+    assert artist.to_record() == {
+        "artist_name": "Artist",
+        "playcount": 12,
+        "rank": 1,
+        "mbid": None,
+    }
+    assert artist.to_record(include_raw=True)["raw"] == raw
 
 
 def test_scrobble_to_record_excludes_raw_by_default():

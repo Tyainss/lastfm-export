@@ -4,6 +4,38 @@ from uuid import UUID
 
 
 @dataclass(frozen=True, slots=True)
+class LastFMUser:
+    username: str
+    raw: dict[str, Any] | None = None
+
+    def to_record(self, *, include_raw: bool = False) -> dict[str, Any]:
+        record: dict[str, Any] = {"username": self.username}
+        if include_raw:
+            record["raw"] = self.raw
+        return record
+
+
+@dataclass(frozen=True, slots=True)
+class UserTopArtist:
+    artist_name: str
+    playcount: int
+    rank: int | None = None
+    mbid: str | None = None
+    raw: dict[str, Any] | None = None
+
+    def to_record(self, *, include_raw: bool = False) -> dict[str, Any]:
+        record = {
+            "artist_name": self.artist_name,
+            "playcount": self.playcount,
+            "rank": self.rank,
+            "mbid": self.mbid,
+        }
+        if include_raw:
+            record["raw"] = self.raw
+        return record
+
+
+@dataclass(frozen=True, slots=True)
 class Scrobble:
     """
     A single Last.fm scrobble.

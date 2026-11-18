@@ -2,7 +2,7 @@ from datetime import datetime, timedelta, timezone
 from collections.abc import Callable
 from dataclasses import dataclass
 from datetime import date
-from typing import Iterator, Optional
+from typing import Iterator, Literal, Optional
 
 from lastfm_export.clients.lastfm import LastFMClient
 from lastfm_export.integrity import WindowReport
@@ -15,6 +15,29 @@ class VerifiedProgress:
     days_checked: int
     tracks_collected: int
     report: WindowReport
+
+
+def iter_utc_windows(
+    *, from_unix: int, to_unix: int, period: Literal["day", "month"] = "day"
+) -> Iterator[tuple[int, int]]:
+    """Plan disjoint inclusive UTC windows, newest first, clipping both ends."""
+    if from_unix > to_unix:
+        raise ValueError("from_unix must not exceed to_unix")
+    if period not in {"day", "month"}:
+        raise ValueError("period must be 'day' or 'month'")
+    end = to_unix
+    while end >= from_unix:
+        current = datetime.fromtimestamp(end, timezone.utc)
+        start = int(
+            datetime(
+                current.year,
+                current.month,
+                1 if period == "month" else current.day,
+                tzinfo=timezone.utc,
+            ).timestamp()
+        )
+        yield max(start, from_unix), end
+        end = start - 1
 
 
 def export_scrobbles(

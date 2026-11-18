@@ -1,3 +1,4 @@
+import math
 import random
 import time
 from collections.abc import Callable
@@ -100,11 +101,21 @@ class HttpClient:
         timeout_secs: float = 30.0,
         retry: RetryConfig | None = None,
         session: requests.Session | None = None,
+        min_interval_secs: float = 0.0,
     ) -> None:
+        if not math.isfinite(min_interval_secs) or min_interval_secs < 0:
+            raise ValueError("min_interval_secs must be finite and nonnegative")
         self._timeout_secs = float(timeout_secs)
         self._retry = retry or RetryConfig()
         self._session = session or requests.Session()
         self._base_headers = {"User-Agent": user_agent, "Accept": "application/json"}
+        self._min_interval_secs = float(min_interval_secs)
+        self._last_request_started: float | None = None
+
+    @property
+    def min_interval_secs(self) -> float:
+        """Minimum seconds between request starts."""
+        return self._min_interval_secs
 
     def get_json(
         self,
@@ -173,6 +184,7 @@ class HttpClient:
         for attempt in range(1, self._retry.max_attempts + 1):
             if before_request is not None:
                 before_request()
+            self._pace_request()
             delay = self._compute_backoff(attempt)
             try:
                 resp = self._session.request(
@@ -260,6 +272,16 @@ class HttpClient:
                 raise error from None
             time.sleep(delay)
         raise AssertionError("Retry budget must include at least one attempt")
+
+    def _pace_request(self) -> None:
+        """Space request starts across this synchronous client's calls and retries."""
+        if self._last_request_started is not None:
+            remaining = (
+                self._last_request_started + self._min_interval_secs - time.monotonic()
+            )
+            if remaining > 0:
+                time.sleep(remaining)
+        self._last_request_started = time.monotonic()
 
     def _compute_backoff(self, attempt: int) -> float:
         raw = self._retry.backoff_base_secs * (2 ** max(0, attempt - 1))

@@ -190,3 +190,36 @@ class _FakeResponse:
     @property
     def text(self):
         return self._text
+
+
+def test_pacing_is_shared_across_requests_and_retry_attempts(monkeypatch):
+    now = [0.0]
+    starts = []
+    monkeypatch.setattr(time, "monotonic", lambda: now[0])
+    monkeypatch.setattr(
+        time, "sleep", lambda seconds: now.__setitem__(0, now[0] + seconds)
+    )
+    session = requests.Session()
+
+    def request(**kwargs):
+        starts.append(now[0])
+        if len(starts) == 1:
+            raise requests.Timeout()
+        return _FakeResponse(200, {"ok": True})
+
+    monkeypatch.setattr(session, "request", request)
+    client = HttpClient(
+        user_agent="tests",
+        session=session,
+        min_interval_secs=1,
+        retry=RetryConfig(max_attempts=2, backoff_base_secs=0, jitter_ratio=0),
+    )
+    client.get_json("https://example.com/first")
+    client.get_json("https://example.com/second")
+    assert starts == [0.0, 1.0, 2.0]
+
+
+@pytest.mark.parametrize("interval", [-1, float("nan"), float("inf")])
+def test_invalid_pacing_interval_is_rejected(interval):
+    with pytest.raises(ValueError):
+        HttpClient(user_agent="tests", min_interval_secs=interval)

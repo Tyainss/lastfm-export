@@ -1,7 +1,8 @@
+import hashlib
 import json
 import logging
 from collections.abc import Callable
-from typing import Any, Dict, Iterator, Optional
+from typing import Any, Dict, Iterator, Optional, TypeVar
 
 from lastfm_export.clients.http import HttpClient, JsonResponse, validate_base_url
 from lastfm_export.errors import (
@@ -10,9 +11,16 @@ from lastfm_export.errors import (
     LastFMRecentTracksAccessError,
 )
 from lastfm_export.integrity import WindowReport, WindowResult
-from lastfm_export.models import ArtistInput, ArtistMetadataResponse, Scrobble
+from lastfm_export.models import (
+    ArtistInput,
+    ArtistMetadataResponse,
+    LastFMUser,
+    Scrobble,
+    UserTopArtist,
+)
 
 logger = logging.getLogger(__name__)
+_UserRecord = TypeVar("_UserRecord")
 
 
 class LastFMClient:
@@ -108,7 +116,7 @@ class LastFMClient:
         response = self.http.get_response(
             self.base_url,
             params={**params, "api_key": self.api_key},
-            response_error=_artist_api_error,
+            response_error=_lastfm_api_error,
             secrets=(self.api_key,),
         )
         payload = response.payload
@@ -181,6 +189,137 @@ class LastFMClient:
             response.attempts,
         )
 
+    def iter_user_friends(
+        self, *, page_size: int = 50, limit: int | None = None
+    ) -> Iterator[LastFMUser]:
+        """Yield the connections returned by user.getFriends in API order."""
+        yield from self._iter_user_records(
+            method="user.getFriends",
+            container="friends",
+            field="user",
+            page_size=page_size,
+            limit=limit,
+            parse=_parse_user,
+            extra_params={"recenttracks": 0},
+        )
+
+    def iter_user_top_artists(
+        self,
+        *,
+        period: str = "overall",
+        page_size: int = 50,
+        limit: int | None = None,
+    ) -> Iterator[UserTopArtist]:
+        """Yield a user's ranked artists; limit caps the total records returned."""
+        if not isinstance(period, str) or period not in {
+            "overall",
+            "7day",
+            "1month",
+            "3month",
+            "6month",
+            "12month",
+        }:
+            raise ValueError("Unsupported top-artists period")
+        yield from self._iter_user_records(
+            method="user.getTopArtists",
+            container="topartists",
+            field="artist",
+            page_size=page_size,
+            limit=limit,
+            parse=_parse_user_artist,
+            extra_params={"period": period},
+        )
+
+    def _iter_user_records(
+        self,
+        *,
+        method: str,
+        container: str,
+        field: str,
+        page_size: int,
+        limit: int | None,
+        parse: Callable[[dict[str, Any]], _UserRecord],
+        extra_params: dict[str, Any],
+    ) -> Iterator[_UserRecord]:
+        if type(page_size) is not int or page_size < 1:
+            raise ValueError("page_size must be a positive integer")
+        if limit is not None and (type(limit) is not int or limit < 1):
+            raise ValueError("limit must be a positive integer or None")
+        username = self._require_username()
+        request_size = min(page_size, limit) if limit is not None else page_size
+        page = 1
+        yielded = 0
+        expected_totals = None
+        seen_pages: set[str] = set()
+        while True:
+            payload = self._get_user_payload(
+                {
+                    "method": method,
+                    "user": username,
+                    "api_key": self.api_key,
+                    "format": "json",
+                    "page": page,
+                    "limit": request_size,
+                    **extra_params,
+                },
+                container=container,
+            )
+            block = payload[container]
+            try:
+                attrs = block["@attr"]
+                if not isinstance(attrs, dict):
+                    raise ValueError("Invalid pagination metadata")
+                pages = _user_count(attrs["totalPages"])
+                total = _user_count(attrs["total"])
+                if (total > 0 and pages == 0) or (total == 0 and pages > 1):
+                    raise ValueError("Inconsistent pagination totals")
+                if (
+                    "page" in attrs
+                    and _user_count(attrs["page"], positive=True) != page
+                ):
+                    raise ValueError("Unexpected page number")
+                if "user" in attrs and (
+                    not isinstance(attrs["user"], str)
+                    or attrs["user"].casefold() != username.casefold()
+                ):
+                    raise ValueError("Response belongs to another user")
+                totals = (pages, total)
+                if expected_totals is not None and totals != expected_totals:
+                    raise ValueError("Pagination totals changed")
+                expected_totals = totals
+                items = block[field]
+                if isinstance(items, dict):
+                    items = [items]
+                if not isinstance(items, list):
+                    raise ValueError("Invalid record list")
+                records = [parse(item) for item in items]
+                if not records and (total != 0 or page < pages):
+                    raise ValueError("Empty page before the reported end")
+                if records and (total == 0 or yielded + len(records) > total):
+                    raise ValueError("Records exceed the reported total")
+                signature = hashlib.sha256(
+                    json.dumps(items, sort_keys=True, ensure_ascii=False).encode(
+                        "utf-8"
+                    )
+                ).hexdigest()
+                if records and signature in seen_pages:
+                    raise ValueError("Repeated page")
+                if page >= pages and yielded + len(records) != total:
+                    raise ValueError("Record count differs from the reported total")
+            except (KeyError, TypeError, ValueError) as exc:
+                raise HttpRequestError(
+                    "GET", self.base_url, message=f"Invalid {method} response: {exc}"
+                ) from None
+            seen_pages.add(signature)
+            for record in records:
+                yield record
+                yielded += 1
+                if limit is not None and yielded >= limit:
+                    return
+            if page >= pages:
+                return
+            page += 1
+
     def get_user_info(self) -> Dict[str, Any]:
         params = {
             "method": "user.getinfo",
@@ -188,7 +327,32 @@ class LastFMClient:
             "api_key": self.api_key,
             "format": "json",
         }
-        return self.http.get_json(self.base_url, params=params)
+        return self._get_user_payload(params, container="user")
+
+    def _get_user_payload(
+        self, params: Dict[str, Any], *, container: str
+    ) -> Dict[str, Any]:
+        validate_base_url(self.base_url)
+        if not self.api_key or not self.api_key.strip():
+            raise ConfigError("A Last.fm API key is required")
+        response = self.http.get_response(
+            self.base_url,
+            params=params,
+            response_error=_lastfm_api_error,
+            secrets=(self.api_key,),
+        )
+        payload = response.payload
+        if not isinstance(payload, dict) or not isinstance(
+            payload.get(container), dict
+        ):
+            raise HttpRequestError(
+                "GET",
+                self.base_url,
+                response.status_code,
+                f"Malformed Last.fm {container} response",
+                attempts=response.attempts,
+            )
+        return payload
 
     def get_user_registration_unix(self) -> Optional[int]:
         """Return the account registration timestamp when Last.fm exposes it."""
@@ -200,12 +364,49 @@ class LastFMClient:
         except (TypeError, ValueError):
             return None
 
+    def get_user_history_start_unix(self) -> int:
+        """Choose a full-history lower bound without assuming registration is earliest.
+
+        One small request checks for older scrobbles. If any exist, use the Unix
+        epoch as a conservative bound; otherwise registration avoids empty years.
+        """
+        registered = self.get_user_registration_unix()
+        if registered is None or registered < 0:
+            raise ConfigError("Could not determine the Last.fm registration timestamp")
+        if registered == 0:
+            return 0
+        payload = self._get_recent_tracks_page(
+            page=1, from_unix=0, to_unix=registered - 1, limit=1
+        )
+        total = self._extract_total(payload["recenttracks"])
+        if total is None or total < 0:
+            raise HttpRequestError(
+                "GET",
+                self.base_url,
+                message="Missing or invalid total in pre-registration history probe",
+            )
+        tracks = payload["recenttracks"]["track"]
+        if isinstance(tracks, dict):
+            tracks = [tracks]
+        has_dated_records = any(
+            self._parse_scrobble(item) is not None for item in tracks
+        )
+        if bool(total) != has_dated_records:
+            raise HttpRequestError(
+                "GET",
+                self.base_url,
+                message="Inconsistent pre-registration history probe",
+            )
+        return 0 if total else registered
+
     def fetch_recent_tracks_window(
         self, *, from_unix: int, to_unix: int, page_size: int = 200
     ) -> WindowResult:
         """Fetch one bounded window while collecting integrity evidence."""
         if page_size <= 0:
             raise ValueError("page_size must be > 0")
+        if from_unix > to_unix:
+            raise ValueError("from_unix must not exceed to_unix")
 
         report = WindowReport(from_unix=from_unix, to_unix=to_unix)
         scrobbles: list[Scrobble] = []
@@ -288,6 +489,8 @@ class LastFMClient:
         """
         if page_size <= 0:
             raise ValueError("page_size must be > 0")
+        if from_unix is not None and to_unix is not None and from_unix > to_unix:
+            raise ValueError("from_unix must not exceed to_unix")
 
         page = 1
         pages_seen = 0
@@ -353,12 +556,40 @@ class LastFMClient:
         if from_unix is not None:
             params["from"] = int(from_unix)
         if to_unix is not None:
-            params["to"] = int(to_unix)
+            # The API excludes `to`; the public Python interface includes it.
+            params["to"] = int(to_unix) + 1
 
         try:
-            return self.http.get_json(self.base_url, params=params)
+            payload = self._get_user_payload(params, container="recenttracks")
+            recent = payload["recenttracks"]
+            tracks = recent.get("track")
+            if not isinstance(tracks, (list, dict)) or (
+                isinstance(tracks, list)
+                and any(not isinstance(item, dict) for item in tracks)
+            ):
+                raise HttpRequestError(
+                    "GET", self.base_url, message="Malformed Last.fm track list"
+                )
+            attributes = recent.get("@attr", {})
+            if not isinstance(attributes, dict):
+                raise HttpRequestError(
+                    "GET",
+                    self.base_url,
+                    message="Malformed Last.fm pagination metadata",
+                )
+            returned_user = attributes.get("user")
+            if returned_user is not None and (
+                not isinstance(returned_user, str)
+                or returned_user.casefold() != self._require_username().casefold()
+            ):
+                raise HttpRequestError(
+                    "GET", self.base_url, message="Last.fm returned a different user"
+                )
+            return payload
         except HttpRequestError as e:
-            if e.status_code == 403 and e.payload and e.payload.get("error") == 17:
+            if e.provider_code == 17 or (
+                isinstance(e.payload, dict) and str(e.payload.get("error")) == "17"
+            ):
                 raise LastFMRecentTracksAccessError(
                     "Last.fm denied access to this account's recent listening history. "
                     "Check that 'Hide recent listening information' is disabled "
@@ -435,19 +666,53 @@ class LastFMClient:
         )
 
 
+def _user_count(value: Any, *, positive: bool = False) -> int:
+    if type(value) is not int and not (isinstance(value, str) and value.isdecimal()):
+        raise ValueError("Expected an integer count")
+    count = int(value)
+    if count < (1 if positive else 0):
+        raise ValueError("Count is out of range")
+    return count
+
+
+def _user_name(item: dict[str, Any]) -> str:
+    if (
+        not isinstance(item, dict)
+        or not isinstance(item.get("name"), str)
+        or not item["name"].strip()
+    ):
+        raise ValueError("Missing or invalid name")
+    return item["name"]
+
+
+def _parse_user(item: dict[str, Any]) -> LastFMUser:
+    return LastFMUser(username=_user_name(item), raw=item)
+
+
+def _parse_user_artist(item: dict[str, Any]) -> UserTopArtist:
+    name = _user_name(item)
+    playcount = _user_count(item["playcount"])
+    attrs = item.get("@attr", {})
+    if not isinstance(attrs, dict):
+        raise ValueError("Invalid artist rank metadata")
+    rank = _user_count(attrs["rank"], positive=True) if "rank" in attrs else None
+    mbid = item.get("mbid")
+    if mbid is not None and not isinstance(mbid, str):
+        raise ValueError("Invalid artist MBID")
+    return UserTopArtist(
+        artist_name=name, playcount=playcount, rank=rank, mbid=mbid or None, raw=item
+    )
+
+
 def _page_overlap(
     previous: list[dict[str, Any]], current: list[dict[str, Any]]
 ) -> bool:
     """Detect any exact raw suffix/prefix overlap without deduplicating it."""
     max_overlap = min(len(previous), len(current))
+    left = [json.dumps(item, ensure_ascii=False, sort_keys=True) for item in previous]
+    right = [json.dumps(item, ensure_ascii=False, sort_keys=True) for item in current]
     for size in range(1, max_overlap + 1):
-        left = [
-            json.dumps(x, ensure_ascii=False, sort_keys=True) for x in previous[-size:]
-        ]
-        right = [
-            json.dumps(x, ensure_ascii=False, sort_keys=True) for x in current[:size]
-        ]
-        if left == right:
+        if left[-size:] == right[:size]:
             return True
     return False
 
@@ -473,7 +738,7 @@ def artist_metadata_params(
     return params
 
 
-def _artist_api_error(response: JsonResponse) -> HttpRequestError | None:
+def _lastfm_api_error(response: JsonResponse) -> HttpRequestError | None:
     payload = response.payload
     if not isinstance(payload, dict) or "error" not in payload:
         return None
