@@ -1,5 +1,9 @@
 from dataclasses import dataclass
+import json
+import os
+import shutil
 from pathlib import Path
+from uuid import uuid4
 from typing import Any, Callable, Dict, Iterable, Iterator, Optional, Tuple
 
 import typer
@@ -76,8 +80,24 @@ def _load_records(in_path: Path, fmt: str) -> Iterable[Record]:
     if fmt == "json":
         return read_json_records(in_path)
     if fmt == "csv":
-        return read_csv_records(in_path)
+        return _read_csv_scrobbles(in_path)
     raise ConfigError(f"Unsupported input format: {fmt}")
+
+
+def _read_csv_scrobbles(path: Path) -> Iterator[Record]:
+    for record in read_csv_records(path):
+        for field in ("raw", "spotify"):
+            if field not in record:
+                continue
+            text = record[field]
+            try:
+                value = json.loads(text) if text and text.strip() else None
+            except ValueError:
+                raise ConfigError(f"Invalid JSON in CSV '{field}' column") from None
+            if value is not None and not isinstance(value, dict):
+                raise ConfigError(f"CSV '{field}' must contain a JSON object or null")
+            record[field] = value
+        yield record
 
 
 def _resolve_sink(
@@ -90,6 +110,19 @@ def _resolve_sink(
     if fmt == "csv":
         return csv_sink(out, overwrite=overwrite)
     raise ConfigError(f"Unsupported output format: {fmt}")
+
+
+def _write_enriched_records(
+    out: Path, fmt: str, records: Iterable[Record], *, overwrite: bool
+) -> None:
+    temporary = out.with_name(f".{out.name}.{uuid4().hex}.tmp")
+    try:
+        if fmt == "ndjson" and out.exists() and not overwrite:
+            shutil.copyfile(out, temporary)
+        _resolve_sink(temporary, fmt, overwrite=overwrite)(records)
+        os.replace(temporary, out)
+    finally:
+        temporary.unlink(missing_ok=True)
 
 
 @dataclass(slots=True)
@@ -209,6 +242,8 @@ def enrich_spotify_cmd(
     in_fmt = infer_format(in_path, in_format)
     out_fmt = infer_format(out, out_format)
     ensure_overwrite_allowed(out=out, fmt=out_fmt, overwrite=overwrite)
+    if not overwrite and in_path.exists() and out.exists() and in_path.samefile(out):
+        raise ConfigError("In-place enrichment requires --overwrite.")
     try:
         progress_reporter = ProgressReporter(progress)
     except ValueError as e:
@@ -219,8 +254,6 @@ def enrich_spotify_cmd(
 
     records = _load_records(in_path, in_fmt)
     spotify = SpotifyClient(client_id=cid, client_secret=csec, user_agent=user_agent)
-
-    sink = _resolve_sink(out, out_fmt, overwrite=overwrite)
 
     stats = SpotifyEnrichStats()
 
@@ -242,8 +275,9 @@ def enrich_spotify_cmd(
         stats=stats,
         on_record=on_record,
     )
-    sink(out_records)
-
-    progress_reporter.close()
+    try:
+        _write_enriched_records(out, out_fmt, out_records, overwrite=overwrite)
+    finally:
+        progress_reporter.close()
     typer.echo(f"Wrote enriched scrobbles to {out}")
     typer.echo(stats.to_log_line())

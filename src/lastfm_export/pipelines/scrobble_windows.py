@@ -4,7 +4,7 @@ from typing import Literal
 from lastfm_export.clients.lastfm import LastFMClient
 from lastfm_export.errors import ScrobbleIntegrityError
 from lastfm_export.integrity import WindowReport, WindowResult
-from lastfm_export.pipelines.lastfm_export import iter_utc_windows
+from lastfm_export.pipelines.lastfm_export import _overlap_retry_size, iter_utc_windows
 
 
 def iter_verified_scrobble_windows(
@@ -19,7 +19,8 @@ def iter_verified_scrobble_windows(
     """Yield verified months newest first, retrying once before daily fallback.
 
     Failed days raise ScrobbleIntegrityError. Save each result before advancing
-    to resume without repeating completed windows. Repeated listens are preserved.
+    to resume without repeating completed windows. Overlap retries change the page
+    size to preserve repeated listens without accepting unverified records.
     """
     if (
         not isinstance(page_size, int)
@@ -30,19 +31,22 @@ def iter_verified_scrobble_windows(
     for start, end in iter_utc_windows(
         from_unix=from_unix, to_unix=to_unix, period=period
     ):
-        attempts = 2 if period == "month" else 1
-        for _ in range(attempts):
+        request_size = page_size
+        for attempt in range(2):
             result = lastfm.fetch_recent_tracks_window(
-                from_unix=start, to_unix=end, page_size=page_size
+                from_unix=start, to_unix=end, page_size=request_size
             )
             if result.report.ok:
                 yield result
                 break
             if on_rejected is not None:
                 on_rejected(result.report)
-        else:
-            if period == "day":
+            retry_size = _overlap_retry_size(result.report, page_size)
+            if attempt == 0 and retry_size is not None:
+                request_size = retry_size
+            elif period == "day":
                 raise ScrobbleIntegrityError(result.report)
+        else:
             yield from iter_verified_scrobble_windows(
                 lastfm=lastfm,
                 from_unix=start,

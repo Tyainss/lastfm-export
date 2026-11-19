@@ -2,6 +2,19 @@
 
 ## [Unreleased]
 
+## [0.6.1] - 2026-11-19
+
+### Fixed
+
+- Recognized existing Spotify information in CSV files with `--only-missing`.
+- Preserved existing CSV columns when adding new listens.
+- Rejected invalid export date ranges before replacing output files.
+- Included listens before registration in full command-line exports.
+- Fixed in-place Spotify enrichment and preserved output files when enrichment fails.
+- Avoided scanning empty years when listening history predates registration.
+- Fixed verification failing when repeated listens cross page boundaries.
+- Fixed collecting connections from users with an empty following list.
+
 ## [0.6.0] - 2026-11-18
 
 ### Added

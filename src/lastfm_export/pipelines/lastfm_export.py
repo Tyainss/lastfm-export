@@ -17,6 +17,12 @@ class VerifiedProgress:
     report: WindowReport
 
 
+def _overlap_retry_size(report: WindowReport, page_size: int) -> int | None:
+    if any(v.startswith("exact raw-payload overlap") for v in report.violations):
+        return 199 if page_size >= 200 else page_size + 1
+    return None
+
+
 def iter_utc_windows(
     *, from_unix: int, to_unix: int, period: Literal["day", "month"] = "day"
 ) -> Iterator[tuple[int, int]]:
@@ -99,6 +105,8 @@ def collect_verified_scrobbles(
     on_window_complete: Optional[Callable[[VerifiedProgress], None]] = None,
 ) -> tuple[list[Scrobble], list[WindowReport]]:
     """Collect newest-to-oldest UTC-day windows with validation reports."""
+    if from_unix > to_unix:
+        raise ValueError("from_unix must not exceed to_unix")
     records: list[Scrobble] = []
     reports: list[WindowReport] = []
     day = datetime.fromtimestamp(to_unix, timezone.utc).date()
@@ -116,6 +124,13 @@ def collect_verified_scrobbles(
             to_unix=min(day_end, to_unix),
             page_size=page_size,
         )
+        retry_size = _overlap_retry_size(result.report, page_size)
+        if retry_size is not None:
+            result = lastfm.fetch_recent_tracks_window(
+                from_unix=max(day_start, from_unix),
+                to_unix=min(day_end, to_unix),
+                page_size=retry_size,
+            )
         reports.append(result.report)
         if not result.report.ok and stop_on_violation:
             if on_window_complete is not None:

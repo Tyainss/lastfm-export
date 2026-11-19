@@ -10,6 +10,12 @@ from lastfm_export.pipelines.lastfm_export import export_scrobbles
 from lastfm_export.pipelines.lastfm_export import iter_utc_windows
 
 
+@pytest.mark.parametrize("start,end", [(20, 10), (86_400, 0)])
+def test_verified_collector_rejects_reversed_bounds_before_fetching(start, end):
+    with pytest.raises(ValueError, match="from_unix must not exceed to_unix"):
+        collect_verified_scrobbles(lastfm=None, from_unix=start, to_unix=end)
+
+
 class _FakeLastFMClient:
     def __init__(self, items: list[Scrobble]) -> None:
         self._items = items

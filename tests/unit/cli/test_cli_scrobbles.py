@@ -1,4 +1,5 @@
 import json
+import csv
 from datetime import datetime, timezone
 from pathlib import Path
 
@@ -22,6 +23,9 @@ class _FakeLastFMClient:
     def get_user_registration_unix(self):
         return 2
 
+    def get_user_history_start_unix(self):
+        return 2
+
 
 def _records():
     return [
@@ -33,6 +37,206 @@ def _records():
             raw={"name": "T"},
         )
     ]
+
+
+def test_csv_resume_preserves_raw_and_enrichment_columns(monkeypatch, tmp_path):
+    out = tmp_path / "history.csv"
+    original = {
+        "artist_name": "A",
+        "track_name": "Old",
+        "album_name": "",
+        "timestamp_unix": "1",
+        "mbid": "",
+        "raw": json.dumps({"name": "Old"}),
+        "spotify": json.dumps({"spotify_track_id": "existing-id"}),
+    }
+    with out.open("w", newline="", encoding="utf-8") as stream:
+        writer = csv.DictWriter(stream, fieldnames=list(original))
+        writer.writeheader()
+        writer.writerow(original)
+    monkeypatch.setattr(
+        "lastfm_export.cli.commands_scrobbles.LastFMClient", _FakeLastFMClient
+    )
+
+    def collect(**kwargs):
+        assert kwargs["watermark"] == 1
+        return [Scrobble("A", "New", None, 2)], [_report()]
+
+    monkeypatch.setattr(
+        "lastfm_export.cli.commands_scrobbles.collect_verified_scrobbles", collect
+    )
+    result = runner.invoke(
+        app,
+        [
+            "scrobbles",
+            "export",
+            "--out",
+            str(out),
+            "--from-unix",
+            "0",
+            "--to-unix",
+            "10",
+            "--api-key",
+            "test",
+            "--username",
+            "u",
+            "--progress",
+            "off",
+        ],
+    )
+    assert result.exit_code == 0, result.output
+    with out.open(newline="", encoding="utf-8") as stream:
+        rows = list(csv.DictReader(stream))
+    assert len(rows) == 2
+    assert rows[1] == original
+    assert rows[0]["track_name"] == "New"
+    assert rows[0]["raw"] == rows[0]["spotify"] == ""
+
+
+@pytest.mark.parametrize("mode", ["verified", "fast"])
+@pytest.mark.parametrize("bounds", [["--from-unix", "86400"], ["--to-unix", "1"]])
+def test_invalid_final_bounds_preserve_existing_output(
+    monkeypatch, tmp_path, mode, bounds
+):
+    monkeypatch.setattr(
+        "lastfm_export.cli.commands_scrobbles.LastFMClient", _FakeLastFMClient
+    )
+    monkeypatch.setattr("lastfm_export.cli.commands_scrobbles.time.time", lambda: 200)
+    monkeypatch.setattr(
+        "lastfm_export.cli.commands_scrobbles.collect_verified_scrobbles",
+        lambda **_: pytest.fail("Invalid bounds must not fetch history"),
+    )
+    monkeypatch.setattr(
+        "lastfm_export.cli.commands_scrobbles.export_scrobbles",
+        lambda **_: pytest.fail("Invalid bounds must not fetch history"),
+    )
+    out = tmp_path / "existing.ndjson"
+    out.write_bytes(b"previous history")
+    result = runner.invoke(
+        app,
+        [
+            "scrobbles",
+            "export",
+            "--out",
+            str(out),
+            "--overwrite",
+            "--api-key",
+            "test",
+            "--username",
+            "u",
+            "--progress",
+            "off",
+            "--acquisition-mode",
+            mode,
+            *bounds,
+        ],
+    )
+    assert result.exit_code != 0
+    assert "from is greater than to" in str(result.exception)
+    assert out.read_bytes() == b"previous history"
+
+
+@pytest.mark.parametrize("mode", ["verified", "fast"])
+def test_full_cli_export_includes_listens_before_registration(
+    monkeypatch, tmp_path, mode
+):
+    from lastfm_export.integrity import WindowResult
+
+    class Client:
+        def __init__(self, **kwargs):
+            pass
+
+        def get_user_registration_unix(self):
+            return 100
+
+        def get_user_history_start_unix(self):
+            return 1
+
+        def fetch_recent_tracks_window(self, *, from_unix, to_unix, page_size):
+            rows = [
+                Scrobble("A", str(t), None, t)
+                for t in (150, 50)
+                if from_unix <= t <= to_unix
+            ]
+            return WindowResult(
+                rows,
+                WindowReport(
+                    from_unix,
+                    to_unix,
+                    api_total=len(rows),
+                    materialized_count=len(rows),
+                    page_count=1,
+                ),
+            )
+
+        def iter_recent_tracks(self, **kwargs):
+            return iter(
+                self.fetch_recent_tracks_window(
+                    from_unix=kwargs["from_unix"],
+                    to_unix=kwargs["to_unix"],
+                    page_size=kwargs["page_size"],
+                ).scrobbles
+            )
+
+    monkeypatch.setattr("lastfm_export.cli.commands_scrobbles.LastFMClient", Client)
+    out = tmp_path / "full.ndjson"
+    result = runner.invoke(
+        app,
+        [
+            "scrobbles",
+            "export",
+            "--out",
+            str(out),
+            "--to-unix",
+            "200",
+            "--api-key",
+            "test",
+            "--username",
+            "u",
+            "--acquisition-mode",
+            mode,
+            "--progress",
+            "off",
+        ],
+    )
+    assert result.exit_code == 0, result.output
+    assert [
+        json.loads(line)["timestamp_unix"] for line in out.read_text().splitlines()
+    ] == [150, 50]
+
+
+def test_private_history_during_start_probe_keeps_friendly_cli_error(
+    monkeypatch, tmp_path
+):
+    from lastfm_export.errors import LastFMRecentTracksAccessError
+
+    class Client:
+        def __init__(self, **kwargs):
+            pass
+
+        def get_user_history_start_unix(self):
+            raise LastFMRecentTracksAccessError("Hide recent listening information")
+
+    monkeypatch.setattr("lastfm_export.cli.commands_scrobbles.LastFMClient", Client)
+    out = tmp_path / "full.ndjson"
+    result = runner.invoke(
+        app,
+        [
+            "scrobbles",
+            "export",
+            "--out",
+            str(out),
+            "--api-key",
+            "test",
+            "--username",
+            "u",
+            "--progress",
+            "off",
+        ],
+    )
+    assert result.exit_code == 1
+    assert "Hide recent listening information" in result.output
+    assert not out.exists()
 
 
 def _report(*violations: str) -> WindowReport:

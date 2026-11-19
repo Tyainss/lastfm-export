@@ -2,6 +2,7 @@ import hashlib
 import json
 import logging
 from collections.abc import Callable
+from datetime import datetime, timezone
 from typing import Any, Dict, Iterator, Optional, TypeVar
 
 from lastfm_export.clients.http import HttpClient, JsonResponse, validate_base_url
@@ -193,15 +194,36 @@ class LastFMClient:
         self, *, page_size: int = 50, limit: int | None = None
     ) -> Iterator[LastFMUser]:
         """Yield the connections returned by user.getFriends in API order."""
-        yield from self._iter_user_records(
-            method="user.getFriends",
-            container="friends",
-            field="user",
-            page_size=page_size,
-            limit=limit,
-            parse=_parse_user,
-            extra_params={"recenttracks": 0},
-        )
+        yielded = False
+        try:
+            for user in self._iter_user_records(
+                method="user.getFriends",
+                container="friends",
+                field="user",
+                page_size=page_size,
+                limit=limit,
+                parse=_parse_user,
+                extra_params={"recenttracks": 0},
+            ):
+                yielded = True
+                yield user
+        except HttpRequestError as error:
+            if (
+                yielded
+                or error.provider_code != 6
+                or error.status_code not in {200, 400}
+                or not isinstance(error.payload, dict)
+                or error.payload.get("message") != "no such page"
+            ):
+                raise
+            # Last.fm reports an empty first page this way, but the user may
+            # also have disappeared. Confirm identity before returning no users.
+            name = self.get_user_info()["user"].get("name")
+            if (
+                not isinstance(name, str)
+                or name.casefold() != self._require_username().casefold()
+            ):
+                raise
 
     def iter_user_top_artists(
         self,
@@ -367,16 +389,41 @@ class LastFMClient:
     def get_user_history_start_unix(self) -> int:
         """Choose a full-history lower bound without assuming registration is earliest.
 
-        One small request checks for older scrobbles. If any exist, use the Unix
-        epoch as a conservative bound; otherwise registration avoids empty years.
+        If older scrobbles exist, search for their earliest UTC month using
+        prefix counts instead of walking empty months from the Unix epoch.
         """
         registered = self.get_user_registration_unix()
-        if registered is None or registered < 0:
+        if registered is None or registered <= 0:
             raise ConfigError("Could not determine the Last.fm registration timestamp")
-        if registered == 0:
-            return 0
+        latest = self._history_probe_latest(registered - 1)
+        if latest is None:
+            return registered
+        date = datetime.fromtimestamp(latest, timezone.utc)
+        lower, upper = 0, (date.year - 1970) * 12 + date.month - 1
+        while lower < upper:
+            middle = (lower + upper) // 2
+            next_month = datetime(
+                1970 + (middle + 1) // 12,
+                (middle + 1) % 12 + 1,
+                1,
+                tzinfo=timezone.utc,
+            )
+            if self._history_probe_latest(int(next_month.timestamp()) - 1) is None:
+                lower = middle + 1
+            else:
+                upper = middle
+        return int(
+            datetime(
+                1970 + lower // 12,
+                lower % 12 + 1,
+                1,
+                tzinfo=timezone.utc,
+            ).timestamp()
+        )
+
+    def _history_probe_latest(self, to_unix: int) -> int | None:
         payload = self._get_recent_tracks_page(
-            page=1, from_unix=0, to_unix=registered - 1, limit=1
+            page=1, from_unix=0, to_unix=to_unix, limit=1
         )
         total = self._extract_total(payload["recenttracks"])
         if total is None or total < 0:
@@ -388,16 +435,17 @@ class LastFMClient:
         tracks = payload["recenttracks"]["track"]
         if isinstance(tracks, dict):
             tracks = [tracks]
-        has_dated_records = any(
-            self._parse_scrobble(item) is not None for item in tracks
-        )
-        if bool(total) != has_dated_records:
+        records = [self._parse_scrobble(item) for item in tracks]
+        dated = [record.timestamp_unix for record in records if record is not None]
+        if bool(total) != bool(dated) or any(
+            not 0 <= timestamp <= to_unix for timestamp in dated
+        ):
             raise HttpRequestError(
                 "GET",
                 self.base_url,
                 message="Inconsistent pre-registration history probe",
             )
-        return 0 if total else registered
+        return max(dated) if dated else None
 
     def fetch_recent_tracks_window(
         self, *, from_unix: int, to_unix: int, page_size: int = 200
