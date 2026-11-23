@@ -386,20 +386,27 @@ class LastFMClient:
         except (TypeError, ValueError):
             return None
 
-    def get_user_history_start_unix(self) -> int:
+    def get_user_history_start_unix(self, *, min_unix: int = 0) -> int:
         """Choose a full-history lower bound without assuming registration is earliest.
 
         If older scrobbles exist, search for their earliest UTC month using
-        prefix counts instead of walking empty months from the Unix epoch.
+        prefix counts instead of walking empty months. Set min_unix to exclude
+        timestamps before a known lower bound. The default includes epoch records.
         """
+        if type(min_unix) is not int or min_unix < 0:
+            raise ValueError("min_unix must be a nonnegative integer")
         registered = self.get_user_registration_unix()
         if registered is None or registered <= 0:
             raise ConfigError("Could not determine the Last.fm registration timestamp")
-        latest = self._history_probe_latest(registered - 1)
+        if min_unix >= registered:
+            return min_unix
+        latest = self._history_probe_latest(registered - 1, from_unix=min_unix)
         if latest is None:
             return registered
         date = datetime.fromtimestamp(latest, timezone.utc)
-        lower, upper = 0, (date.year - 1970) * 12 + date.month - 1
+        floor = datetime.fromtimestamp(min_unix, timezone.utc)
+        lower = (floor.year - 1970) * 12 + floor.month - 1
+        upper = (date.year - 1970) * 12 + date.month - 1
         while lower < upper:
             middle = (lower + upper) // 2
             next_month = datetime(
@@ -408,22 +415,30 @@ class LastFMClient:
                 1,
                 tzinfo=timezone.utc,
             )
-            if self._history_probe_latest(int(next_month.timestamp()) - 1) is None:
+            if (
+                self._history_probe_latest(
+                    int(next_month.timestamp()) - 1, from_unix=min_unix
+                )
+                is None
+            ):
                 lower = middle + 1
             else:
                 upper = middle
-        return int(
-            datetime(
-                1970 + lower // 12,
-                lower % 12 + 1,
-                1,
-                tzinfo=timezone.utc,
-            ).timestamp()
+        return max(
+            min_unix,
+            int(
+                datetime(
+                    1970 + lower // 12,
+                    lower % 12 + 1,
+                    1,
+                    tzinfo=timezone.utc,
+                ).timestamp()
+            ),
         )
 
-    def _history_probe_latest(self, to_unix: int) -> int | None:
+    def _history_probe_latest(self, to_unix: int, *, from_unix: int) -> int | None:
         payload = self._get_recent_tracks_page(
-            page=1, from_unix=0, to_unix=to_unix, limit=1
+            page=1, from_unix=from_unix, to_unix=to_unix, limit=1
         )
         total = self._extract_total(payload["recenttracks"])
         if total is None or total < 0:
@@ -438,7 +453,7 @@ class LastFMClient:
         records = [self._parse_scrobble(item) for item in tracks]
         dated = [record.timestamp_unix for record in records if record is not None]
         if bool(total) != bool(dated) or any(
-            not 0 <= timestamp <= to_unix for timestamp in dated
+            not from_unix <= timestamp <= to_unix for timestamp in dated
         ):
             raise HttpRequestError(
                 "GET",

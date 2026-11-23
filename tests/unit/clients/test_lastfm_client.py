@@ -493,9 +493,17 @@ def test_full_history_probe_rejects_contradictory_zero_total():
         datetime(1970, 1, 1, tzinfo=timezone.utc),
     ],
 )
-def test_history_start_search_finds_first_month_without_scanning_empty_years(oldest):
+@pytest.mark.parametrize("bounded", [False, True])
+def test_history_start_search_finds_first_month_without_scanning_empty_years(
+    oldest, bounded
+):
     registered = int(datetime(2024, 1, 1, tzinfo=timezone.utc).timestamp())
+    floor = (
+        int(datetime(2002, 1, 15, tzinfo=timezone.utc).timestamp()) if bounded else 0
+    )
     timestamps = [int(oldest.timestamp()), registered - 100]
+    if bounded:
+        timestamps.append(100)
 
     class ProbeHttp:
         def __init__(self):
@@ -508,8 +516,12 @@ def test_history_start_search_finds_first_month_without_scanning_empty_years(old
                     {"user": {"registered": {"unixtime": str(registered)}}}, 200, 1
                 )
             assert params["page"] == params["limit"] == 1
-            assert params["from"] == 0
-            found = [timestamp for timestamp in timestamps if timestamp < params["to"]]
+            assert params["from"] == floor
+            found = [
+                timestamp
+                for timestamp in timestamps
+                if floor <= timestamp < params["to"]
+            ]
             return JsonResponse(
                 {
                     "recenttracks": {
@@ -523,10 +535,14 @@ def test_history_start_search_finds_first_month_without_scanning_empty_years(old
 
     http = ProbeHttp()
     client = LastFMClient(api_key="key", username="u", user_agent="tests", http=http)
-    expected = int(
-        datetime(oldest.year, oldest.month, 1, tzinfo=timezone.utc).timestamp()
+    first = datetime.fromtimestamp(
+        min(t for t in timestamps if t >= floor), timezone.utc
     )
-    assert client.get_user_history_start_unix() == expected
+    expected = max(
+        floor,
+        int(datetime(first.year, first.month, 1, tzinfo=timezone.utc).timestamp()),
+    )
+    assert client.get_user_history_start_unix(min_unix=floor) == expected
     assert len(http.calls) <= 12
 
 

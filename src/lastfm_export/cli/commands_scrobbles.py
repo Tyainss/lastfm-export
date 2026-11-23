@@ -31,6 +31,7 @@ from lastfm_export.pipelines.lastfm_export import (
 )
 
 scrobbles_app = typer.Typer(no_args_is_help=True)
+_DATED_HISTORY_START = int(datetime(2002, 1, 1, tzinfo=timezone.utc).timestamp())
 
 
 @scrobbles_app.command("export")
@@ -56,6 +57,11 @@ def export_cmd(
     ),
     from_unix: Optional[int] = typer.Option(
         None, "--from-unix", help="Inclusive start timestamp (unix seconds, UTC)."
+    ),
+    dated_only: bool = typer.Option(
+        False,
+        "--dated-only",
+        help="Exclude timestamps before January 1, 2002 UTC. Use a new output or --overwrite.",
     ),
     to_unix: Optional[int] = typer.Option(
         None, "--to-unix", help="Inclusive end timestamp (unix seconds, UTC)."
@@ -131,6 +137,8 @@ def export_cmd(
     username_val = get_env_or_value("LASTFM_USERNAME", username)
 
     watermark = None
+    if dated_only and out.exists() and not overwrite:
+        raise ConfigError("--dated-only requires a new output file or --overwrite.")
     if resume.lower() == "auto" and out.exists() and not overwrite:
         watermark = read_watermark(out, fmt)
 
@@ -150,10 +158,16 @@ def export_cmd(
     snapshot_from = window.from_unix
     if snapshot_from is None:
         try:
-            snapshot_from = lastfm.get_user_history_start_unix()
+            snapshot_from = (
+                lastfm.get_user_history_start_unix(min_unix=_DATED_HISTORY_START)
+                if dated_only
+                else lastfm.get_user_history_start_unix()
+            )
         except LastFMRecentTracksAccessError as e:
             typer.echo(f"Error: {e}", err=True)
             raise typer.Exit(code=1) from e
+    if dated_only:
+        snapshot_from = max(snapshot_from, _DATED_HISTORY_START)
     if snapshot_from > snapshot_to:
         raise ConfigError("Invalid time window: from is greater than to.")
 

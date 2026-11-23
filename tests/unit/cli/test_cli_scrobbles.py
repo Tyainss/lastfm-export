@@ -27,6 +27,48 @@ class _FakeLastFMClient:
         return 2
 
 
+def test_dated_only_export_bounds_the_history_search(monkeypatch, tmp_path):
+    from lastfm_export.cli import commands_scrobbles
+
+    floor = commands_scrobbles._DATED_HISTORY_START
+    starts = []
+
+    def history_start(self, *, min_unix):
+        starts.append(min_unix)
+        return min_unix + 1
+
+    def collect(**kwargs):
+        assert kwargs["from_unix"] == floor + 1
+        return [Scrobble("A", "Song", None, floor + 1)], []
+
+    monkeypatch.setattr(_FakeLastFMClient, "get_user_history_start_unix", history_start)
+    monkeypatch.setattr(commands_scrobbles, "LastFMClient", _FakeLastFMClient)
+    monkeypatch.setattr(commands_scrobbles, "collect_verified_scrobbles", collect)
+    out = tmp_path / "dated.ndjson"
+    args = [
+        "scrobbles",
+        "export",
+        "--out",
+        str(out),
+        "--api-key",
+        "test",
+        "--username",
+        "u",
+        "--dated-only",
+        "--to-unix",
+        str(floor + 100),
+    ]
+    assert runner.invoke(app, args).exit_code == 0
+    assert starts == [floor]
+    before = out.read_bytes()
+    result = runner.invoke(app, args)
+    assert result.exit_code != 0
+    assert "--dated-only requires a new output file or --overwrite" in str(
+        result.exception
+    )
+    assert out.read_bytes() == before
+
+
 def _records():
     return [
         Scrobble(
