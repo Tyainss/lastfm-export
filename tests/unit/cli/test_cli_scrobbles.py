@@ -57,6 +57,8 @@ def test_dated_only_export_bounds_the_history_search(monkeypatch, tmp_path):
         "--username",
         "u",
         "--dated-only",
+        "--progress",
+        "on",
         "--to-unix",
         str(floor + 100),
     ]
@@ -64,6 +66,8 @@ def test_dated_only_export_bounds_the_history_search(monkeypatch, tmp_path):
     assert starts == [floor]
     result = runner.invoke(app, args)
     assert result.exit_code == 0, result.output
+    assert "Resuming verified export for u" in result.output
+    assert "Pre-2002 timestamps excluded." in result.output
     assert starts == [floor, floor + 2]
     assert [
         json.loads(line)["timestamp_unix"] for line in out.read_text().splitlines()
@@ -442,9 +446,9 @@ def test_cli_progress_on_prints_verified_start_and_completion(
     result = _invoke(monkeypatch, out, _records(), [_report()], "--progress", "on")
 
     assert result.exit_code == 0
-    assert "Starting verified export:" in result.output
+    assert "Starting verified export for u | 1970-01-01 UTC" in result.output
     assert (
-        "Completed verified export: 1 tracks from 1 days; integrity: ok"
+        "Completed verified export. Saved 1 new scrobble. Includes 1 with pre-2002 timestamps."
         in result.output
     )
 
@@ -454,7 +458,7 @@ def test_cli_progress_auto_is_quiet_in_test_runner(monkeypatch, tmp_path: Path):
     result = _invoke(monkeypatch, out, _records(), [_report()])
 
     assert result.exit_code == 0
-    assert "Starting verified export:" not in result.output
+    assert "Starting verified export" not in result.output
 
 
 def test_cli_strict_failure_preserves_existing_destination(monkeypatch, tmp_path: Path):
@@ -604,11 +608,8 @@ def test_cli_fast_progress_on_prints_page_summary(monkeypatch, tmp_path: Path):
     result = _invoke_fast(monkeypatch, out, _records(), "--progress", "on")
 
     assert result.exit_code == 0
-    assert "Starting fast export:" in result.output
-    assert (
-        "Completed fast export: 1 tracks from 0 days; integrity: unverified"
-        in result.output
-    )
+    assert "Starting fast export for u | 1970-01-01 UTC" in result.output
+    assert "Completed fast export. Saved 1 new scrobble." in result.output
 
 
 def test_cli_fast_rejects_integrity_policy(monkeypatch, tmp_path: Path):

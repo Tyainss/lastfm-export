@@ -18,6 +18,7 @@ from lastfm_export.cli.dates import resolve_time_window
 from lastfm_export.cli.progress import ProgressReporter
 from lastfm_export.clients.lastfm import LastFMClient
 from lastfm_export.errors import ConfigError, LastFMRecentTracksAccessError
+from lastfm_export.integrity import WindowReport
 from lastfm_export.io.readers import (
     read_csv_records,
     read_json_records,
@@ -207,9 +208,15 @@ def export_cmd(
     if snapshot_from > snapshot_to:
         raise ConfigError("Invalid time window: from is greater than to.")
 
-    progress_reporter.start(
-        f"Starting {mode} export: {_utc_date(snapshot_from)} to {_utc_date(snapshot_to)} UTC"
-    )
+    action = "Resuming" if watermark is not None else "Starting"
+    date_range = _utc_range(snapshot_from, snapshot_to)
+    if search_dated and dated_from is None:
+        date_range = (
+            "no new dated listens in range"
+            if watermark is not None
+            else "no dated listens in range"
+        )
+    progress_reporter.start(f"{action} {mode} export for {username_val} | {date_range}")
 
     def on_window_start(day: date, days_checked: int, tracks_collected: int) -> None:
         progress_reporter.update(
@@ -231,6 +238,12 @@ def export_cmd(
             f"Working: {page} pages fetched, {tracks_collected} tracks collected"
         )
 
+    def on_window_retry(report: WindowReport) -> None:
+        progress_reporter.update(
+            f"Rechecking {_utc_range(report.from_unix, report.to_unix)}: "
+            "Last.fm returned overlapping pages."
+        )
+
     try:
         scrobbles, reports = [], []
         if mode == "verified":
@@ -244,6 +257,7 @@ def export_cmd(
                     stop_on_violation=policy == "strict",
                     on_window_start=on_window_start,
                     on_window_complete=on_window_complete,
+                    on_window_retry=on_window_retry,
                 )
             if early_from is not None and (
                 policy != "strict" or all(r.ok for r in reports)
@@ -253,6 +267,7 @@ def export_cmd(
                     from_unix=early_from,
                     to_unix=_DATED_HISTORY_START - 1,
                     page_size=page_size,
+                    on_retry=on_window_retry,
                 )
                 reports.append(early.report)
                 if early.report.ok or policy == "warn":
@@ -307,12 +322,11 @@ def export_cmd(
             )
         _write_integrity_report(report_path, report)
     if strict_failure:
-        progress_reporter.finish(
-            f"Stopped verified export after {len(scrobbles)} tracks from {len(reports)} days; "
-            "integrity: failed"
-        )
+        progress_reporter.close()
+        failed = next(report for report in reports if not report.ok)
         typer.echo(
-            f"Integrity check failed; destination was not modified. Report: {report_path}",
+            f"Could not verify listens for {_utc_range(failed.from_unix, failed.to_unix)}. "
+            f"Try running the export again. Output file unchanged. Report: {report_path}",
             err=True,
         )
         raise typer.Exit(code=1)
@@ -333,10 +347,18 @@ def export_cmd(
         typer.echo(f"Error: {e}", err=True)
         raise typer.Exit(code=1) from e
 
-    progress_reporter.finish(
-        f"Completed {mode} export: {len(scrobbles)} tracks from {len(reports)} days; "
-        f"integrity: {status}"
-    )
+    count = len(scrobbles)
+    unit = "scrobble" if count == 1 else "scrobbles"
+    summary = f"Completed {mode} export. Saved {count:,} new {unit}."
+    if dated_only:
+        summary += " Pre-2002 timestamps excluded."
+    else:
+        early_count = sum(
+            scrobble.timestamp_unix < _DATED_HISTORY_START for scrobble in scrobbles
+        )
+        if early_count:
+            summary += f" Includes {early_count:,} with pre-2002 timestamps."
+    progress_reporter.finish(summary)
     typer.echo(f"Wrote scrobbles to {out}")
     if has_violations and should_write_report:
         typer.echo(f"Warning: integrity violations recorded in {report_path}", err=True)
@@ -391,6 +413,11 @@ def _write_integrity_report(path: Path, report: dict) -> None:
 
 def _utc_date(timestamp: int) -> str:
     return datetime.fromtimestamp(timestamp, timezone.utc).date().isoformat()
+
+
+def _utc_range(start: int, end: int) -> str:
+    first, last = _utc_date(start), _utc_date(end)
+    return f"{first} UTC" if first == last else f"{first} to {last} UTC"
 
 
 def _quarter_label(day: date) -> str:

@@ -29,6 +29,7 @@ def _fetch_verified_range(
     from_unix: int,
     to_unix: int,
     page_size: int,
+    on_retry: Optional[Callable[[WindowReport], None]] = None,
 ) -> WindowResult:
     result = lastfm.fetch_recent_tracks_window(
         from_unix=from_unix,
@@ -37,6 +38,8 @@ def _fetch_verified_range(
     )
     retry_size = _overlap_retry_size(result.report, page_size)
     if retry_size is not None:
+        if on_retry is not None:
+            on_retry(result.report)
         result = lastfm.fetch_recent_tracks_window(
             from_unix=from_unix,
             to_unix=to_unix,
@@ -125,6 +128,7 @@ def collect_verified_scrobbles(
     stop_on_violation: bool = True,
     on_window_start: Optional[Callable[[date, int, int], None]] = None,
     on_window_complete: Optional[Callable[[VerifiedProgress], None]] = None,
+    on_window_retry: Optional[Callable[[WindowReport], None]] = None,
 ) -> tuple[list[Scrobble], list[WindowReport]]:
     """Collect newest-to-oldest UTC-day windows with validation reports."""
     if from_unix > to_unix:
@@ -146,6 +150,7 @@ def collect_verified_scrobbles(
             from_unix=max(day_start, from_unix),
             to_unix=min(day_end, to_unix),
             page_size=page_size,
+            on_retry=on_window_retry,
         )
         reports.append(result.report)
         if not result.report.ok and stop_on_violation:
