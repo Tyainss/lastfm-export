@@ -18,6 +18,7 @@ from lastfm_export.cli.dates import resolve_time_window
 from lastfm_export.cli.progress import ProgressReporter
 from lastfm_export.clients.lastfm import LastFMClient
 from lastfm_export.errors import ConfigError, LastFMRecentTracksAccessError
+from lastfm_export.integrity import WindowReport
 from lastfm_export.io.readers import (
     read_csv_records,
     read_json_records,
@@ -26,11 +27,13 @@ from lastfm_export.io.readers import (
 from lastfm_export.io.sinks import csv_sink, json_sink, ndjson_sink
 from lastfm_export.pipelines.lastfm_export import (
     VerifiedProgress,
+    _fetch_verified_range,
     collect_verified_scrobbles,
     export_scrobbles,
 )
 
 scrobbles_app = typer.Typer(no_args_is_help=True)
+_DATED_HISTORY_START = int(datetime(2002, 1, 1, tzinfo=timezone.utc).timestamp())
 
 
 @scrobbles_app.command("export")
@@ -56,6 +59,11 @@ def export_cmd(
     ),
     from_unix: Optional[int] = typer.Option(
         None, "--from-unix", help="Inclusive start timestamp (unix seconds, UTC)."
+    ),
+    dated_only: bool = typer.Option(
+        False,
+        "--dated-only",
+        help="Exclude timestamps before January 1, 2002 UTC.",
     ),
     to_unix: Optional[int] = typer.Option(
         None, "--to-unix", help="Inclusive end timestamp (unix seconds, UTC)."
@@ -131,7 +139,22 @@ def export_cmd(
     username_val = get_env_or_value("LASTFM_USERNAME", username)
 
     watermark = None
-    if resume.lower() == "auto" and out.exists() and not overwrite:
+    merge_existing = out.exists() and not overwrite
+    existing = None
+    if dated_only and merge_existing:
+        existing = _read_existing_records(out, fmt)
+        try:
+            timestamps = [int(record["timestamp_unix"]) for record in existing]
+        except (KeyError, TypeError, ValueError) as exc:
+            raise ConfigError("Existing output contains an invalid timestamp.") from exc
+        if any(timestamp < _DATED_HISTORY_START for timestamp in timestamps):
+            raise ConfigError(
+                "Existing output contains pre-2002 records. Choose a new output file "
+                "or use --overwrite to replace it with a dated-only export."
+            )
+        if resume.lower() == "auto":
+            watermark = max(timestamps, default=None)
+    elif resume.lower() == "auto" and merge_existing:
         watermark = read_watermark(out, fmt)
 
     window = resolve_time_window(
@@ -148,18 +171,52 @@ def export_cmd(
     if snapshot_to is None:
         snapshot_to = int(time.time())
     snapshot_from = window.from_unix
-    if snapshot_from is None:
+    search_dated = (
+        snapshot_from is None
+        and snapshot_to >= _DATED_HISTORY_START
+        and (dated_only or mode == "verified")
+    )
+    early_from = None
+    dated_from = None
+    if search_dated:
+        minimum = max(
+            _DATED_HISTORY_START, watermark + 1 if watermark is not None else 0
+        )
+        try:
+            if minimum <= snapshot_to:
+                dated_from = lastfm.find_oldest_scrobble_unix(
+                    from_unix=minimum, to_unix=snapshot_to
+                )
+        except LastFMRecentTracksAccessError as e:
+            typer.echo(f"Error: {e}", err=True)
+            raise typer.Exit(code=1) from e
+        snapshot_from = (
+            dated_from if dated_from is not None else min(minimum, snapshot_to)
+        )
+        if not dated_only and (
+            watermark is None or watermark < _DATED_HISTORY_START - 1
+        ):
+            early_from = 0 if watermark is None else max(0, watermark + 1)
+    elif snapshot_from is None:
         try:
             snapshot_from = lastfm.get_user_history_start_unix()
         except LastFMRecentTracksAccessError as e:
             typer.echo(f"Error: {e}", err=True)
             raise typer.Exit(code=1) from e
+    if dated_only:
+        snapshot_from = max(snapshot_from, _DATED_HISTORY_START)
     if snapshot_from > snapshot_to:
         raise ConfigError("Invalid time window: from is greater than to.")
 
-    progress_reporter.start(
-        f"Starting {mode} export: {_utc_date(snapshot_from)} to {_utc_date(snapshot_to)} UTC"
-    )
+    action = "Resuming" if watermark is not None else "Starting"
+    date_range = _utc_range(snapshot_from, snapshot_to)
+    if search_dated and dated_from is None:
+        date_range = (
+            "no new dated listens in range"
+            if watermark is not None
+            else "no dated listens in range"
+        )
+    progress_reporter.start(f"{action} {mode} export for {username_val} | {date_range}")
 
     def on_window_start(day: date, days_checked: int, tracks_collected: int) -> None:
         progress_reporter.update(
@@ -181,19 +238,41 @@ def export_cmd(
             f"Working: {page} pages fetched, {tracks_collected} tracks collected"
         )
 
+    def on_window_retry(report: WindowReport) -> None:
+        progress_reporter.update(
+            f"Rechecking {_utc_range(report.from_unix, report.to_unix)}: "
+            "Last.fm returned overlapping pages."
+        )
+
     try:
+        scrobbles, reports = [], []
         if mode == "verified":
-            scrobbles, reports = collect_verified_scrobbles(
-                lastfm=lastfm,
-                from_unix=snapshot_from,
-                to_unix=snapshot_to,
-                page_size=page_size,
-                watermark=watermark,
-                stop_on_violation=policy == "strict",
-                on_window_start=on_window_start,
-                on_window_complete=on_window_complete,
-            )
-        else:
+            if not search_dated or dated_from is not None:
+                scrobbles, reports = collect_verified_scrobbles(
+                    lastfm=lastfm,
+                    from_unix=snapshot_from,
+                    to_unix=snapshot_to,
+                    page_size=page_size,
+                    watermark=watermark,
+                    stop_on_violation=policy == "strict",
+                    on_window_start=on_window_start,
+                    on_window_complete=on_window_complete,
+                    on_window_retry=on_window_retry,
+                )
+            if early_from is not None and (
+                policy != "strict" or all(r.ok for r in reports)
+            ):
+                early = _fetch_verified_range(
+                    lastfm=lastfm,
+                    from_unix=early_from,
+                    to_unix=_DATED_HISTORY_START - 1,
+                    page_size=page_size,
+                    on_retry=on_window_retry,
+                )
+                reports.append(early.report)
+                if early.report.ok or policy == "warn":
+                    scrobbles.extend(early.scrobbles)
+        elif not search_dated or dated_from is not None:
             scrobbles = list(
                 export_scrobbles(
                     lastfm=lastfm,
@@ -205,7 +284,6 @@ def export_cmd(
                     on_page=on_fast_page,
                 )
             )
-            reports = []
     except LastFMRecentTracksAccessError as e:
         progress_reporter.close()
         typer.echo(f"Error: {e}", err=True)
@@ -231,7 +309,7 @@ def export_cmd(
         report = {
             "status": status,
             "acquisition_mode": mode,
-            "from_unix": snapshot_from,
+            "from_unix": early_from if early_from is not None else snapshot_from,
             "to_unix": snapshot_to,
             "watermark": watermark,
             "windows": [report.to_record() for report in reports],
@@ -244,18 +322,17 @@ def export_cmd(
             )
         _write_integrity_report(report_path, report)
     if strict_failure:
-        progress_reporter.finish(
-            f"Stopped verified export after {len(scrobbles)} tracks from {len(reports)} days; "
-            "integrity: failed"
-        )
+        progress_reporter.close()
+        failed = next(report for report in reports if not report.ok)
         typer.echo(
-            f"Integrity check failed; destination was not modified. Report: {report_path}",
+            f"Could not verify listens for {_utc_range(failed.from_unix, failed.to_unix)}. "
+            f"Try running the export again. Output file unchanged. Report: {report_path}",
             err=True,
         )
         raise typer.Exit(code=1)
 
-    merge_existing = out.exists() and not overwrite
-    existing = _read_existing_records(out, fmt) if merge_existing else []
+    if existing is None:
+        existing = _read_existing_records(out, fmt) if merge_existing else []
     new_records = [s.to_record(include_raw=include_raw) for s in scrobbles]
     # Preserve legacy NDJSON append behavior outside resume; resume keeps newest rows first.
     records = (
@@ -270,10 +347,18 @@ def export_cmd(
         typer.echo(f"Error: {e}", err=True)
         raise typer.Exit(code=1) from e
 
-    progress_reporter.finish(
-        f"Completed {mode} export: {len(scrobbles)} tracks from {len(reports)} days; "
-        f"integrity: {status}"
-    )
+    count = len(scrobbles)
+    unit = "scrobble" if count == 1 else "scrobbles"
+    summary = f"Completed {mode} export. Saved {count:,} new {unit}."
+    if dated_only:
+        summary += " Pre-2002 timestamps excluded."
+    else:
+        early_count = sum(
+            scrobble.timestamp_unix < _DATED_HISTORY_START for scrobble in scrobbles
+        )
+        if early_count:
+            summary += f" Includes {early_count:,} with pre-2002 timestamps."
+    progress_reporter.finish(summary)
     typer.echo(f"Wrote scrobbles to {out}")
     if has_violations and should_write_report:
         typer.echo(f"Warning: integrity violations recorded in {report_path}", err=True)
@@ -328,6 +413,11 @@ def _write_integrity_report(path: Path, report: dict) -> None:
 
 def _utc_date(timestamp: int) -> str:
     return datetime.fromtimestamp(timestamp, timezone.utc).date().isoformat()
+
+
+def _utc_range(start: int, end: int) -> str:
+    first, last = _utc_date(start), _utc_date(end)
+    return f"{first} UTC" if first == last else f"{first} to {last} UTC"
 
 
 def _quarter_label(day: date) -> str:

@@ -9,7 +9,7 @@ from typer.testing import CliRunner
 
 from lastfm_export.cli.app import app
 from lastfm_export.cli.commands_scrobbles import _is_completed_full_quarter
-from lastfm_export.integrity import WindowReport
+from lastfm_export.integrity import WindowReport, WindowResult
 from lastfm_export.models import Scrobble
 
 
@@ -25,6 +25,109 @@ class _FakeLastFMClient:
 
     def get_user_history_start_unix(self):
         return 2
+
+
+def test_dated_only_export_bounds_the_history_search(monkeypatch, tmp_path):
+    from lastfm_export.cli import commands_scrobbles
+
+    floor = commands_scrobbles._DATED_HISTORY_START
+    starts = []
+
+    def history_start(self, *, from_unix, to_unix):
+        starts.append(from_unix)
+        return from_unix + 1
+
+    def collect(**kwargs):
+        assert kwargs["from_unix"] == starts[-1] + 1
+        return [Scrobble("A", "Song", None, kwargs["from_unix"])], []
+
+    monkeypatch.setattr(
+        _FakeLastFMClient, "find_oldest_scrobble_unix", history_start, raising=False
+    )
+    monkeypatch.setattr(commands_scrobbles, "LastFMClient", _FakeLastFMClient)
+    monkeypatch.setattr(commands_scrobbles, "collect_verified_scrobbles", collect)
+    out = tmp_path / "dated.ndjson"
+    args = [
+        "scrobbles",
+        "export",
+        "--out",
+        str(out),
+        "--api-key",
+        "test",
+        "--username",
+        "u",
+        "--dated-only",
+        "--progress",
+        "on",
+        "--to-unix",
+        str(floor + 100),
+    ]
+    assert runner.invoke(app, args).exit_code == 0
+    assert starts == [floor]
+    result = runner.invoke(app, args)
+    assert result.exit_code == 0, result.output
+    assert "Resuming verified export for u" in result.output
+    assert "Pre-2002 timestamps excluded." in result.output
+    assert starts == [floor, floor + 2]
+    assert [
+        json.loads(line)["timestamp_unix"] for line in out.read_text().splitlines()
+    ] == [floor + 3, floor + 1]
+
+    # An existing raw export should not silently lose data when changing modes.
+    with out.open("a", encoding="utf-8") as stream:
+        stream.write('{"timestamp_unix":100}\n')
+    before = out.read_bytes()
+    result = runner.invoke(app, args)
+    assert result.exit_code != 0
+    assert "Existing output contains pre-2002 records" in str(result.exception)
+    assert out.read_bytes() == before
+
+
+def test_verified_full_export_fetches_early_records_as_one_range(monkeypatch, tmp_path):
+    from lastfm_export.cli import commands_scrobbles
+
+    floor = commands_scrobbles._DATED_HISTORY_START
+    cutoff = floor + 1000 * 86_400
+    calls = []
+
+    class Client:
+        def __init__(self, **kwargs):
+            pass
+
+        def find_oldest_scrobble_unix(self, *, from_unix, to_unix):
+            assert (from_unix, to_unix) == (floor, cutoff)
+            return cutoff
+
+        def fetch_recent_tracks_window(self, *, from_unix, to_unix, page_size):
+            calls.append((from_unix, to_unix))
+            timestamps = [cutoff] if from_unix == cutoff else [99, 99]
+            events = [Scrobble("A", "Song", None, seconds) for seconds in timestamps]
+            return WindowResult(
+                events, WindowReport(from_unix, to_unix, len(events), len(events), 1)
+            )
+
+    monkeypatch.setattr(commands_scrobbles, "LastFMClient", Client)
+    out = tmp_path / "full.ndjson"
+    result = runner.invoke(
+        app,
+        [
+            "scrobbles",
+            "export",
+            "--out",
+            str(out),
+            "--api-key",
+            "test",
+            "--username",
+            "u",
+            "--to-unix",
+            str(cutoff),
+        ],
+    )
+    assert result.exit_code == 0, result.output
+    assert calls == [(cutoff, cutoff), (0, floor - 1)]
+    assert [
+        json.loads(line)["timestamp_unix"] for line in out.read_text().splitlines()
+    ] == [cutoff, 99, 99]
 
 
 def _records():
@@ -214,7 +317,7 @@ def test_private_history_during_start_probe_keeps_friendly_cli_error(
         def __init__(self, **kwargs):
             pass
 
-        def get_user_history_start_unix(self):
+        def find_oldest_scrobble_unix(self, **kwargs):
             raise LastFMRecentTracksAccessError("Hide recent listening information")
 
     monkeypatch.setattr("lastfm_export.cli.commands_scrobbles.LastFMClient", Client)
@@ -343,9 +446,9 @@ def test_cli_progress_on_prints_verified_start_and_completion(
     result = _invoke(monkeypatch, out, _records(), [_report()], "--progress", "on")
 
     assert result.exit_code == 0
-    assert "Starting verified export:" in result.output
+    assert "Starting verified export for u | 1970-01-01 UTC" in result.output
     assert (
-        "Completed verified export: 1 tracks from 1 days; integrity: ok"
+        "Completed verified export. Saved 1 new scrobble. Includes 1 with pre-2002 timestamps."
         in result.output
     )
 
@@ -355,7 +458,7 @@ def test_cli_progress_auto_is_quiet_in_test_runner(monkeypatch, tmp_path: Path):
     result = _invoke(monkeypatch, out, _records(), [_report()])
 
     assert result.exit_code == 0
-    assert "Starting verified export:" not in result.output
+    assert "Starting verified export" not in result.output
 
 
 def test_cli_strict_failure_preserves_existing_destination(monkeypatch, tmp_path: Path):
@@ -505,11 +608,8 @@ def test_cli_fast_progress_on_prints_page_summary(monkeypatch, tmp_path: Path):
     result = _invoke_fast(monkeypatch, out, _records(), "--progress", "on")
 
     assert result.exit_code == 0
-    assert "Starting fast export:" in result.output
-    assert (
-        "Completed fast export: 1 tracks from 0 days; integrity: unverified"
-        in result.output
-    )
+    assert "Starting fast export for u | 1970-01-01 UTC" in result.output
+    assert "Completed fast export. Saved 1 new scrobble." in result.output
 
 
 def test_cli_fast_rejects_integrity_policy(monkeypatch, tmp_path: Path):
