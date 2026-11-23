@@ -62,7 +62,7 @@ def export_cmd(
     dated_only: bool = typer.Option(
         False,
         "--dated-only",
-        help="Exclude timestamps before January 1, 2002 UTC. Use a new output or --overwrite.",
+        help="Exclude timestamps before January 1, 2002 UTC.",
     ),
     to_unix: Optional[int] = typer.Option(
         None, "--to-unix", help="Inclusive end timestamp (unix seconds, UTC)."
@@ -138,9 +138,22 @@ def export_cmd(
     username_val = get_env_or_value("LASTFM_USERNAME", username)
 
     watermark = None
-    if dated_only and out.exists() and not overwrite:
-        raise ConfigError("--dated-only requires a new output file or --overwrite.")
-    if resume.lower() == "auto" and out.exists() and not overwrite:
+    merge_existing = out.exists() and not overwrite
+    existing = None
+    if dated_only and merge_existing:
+        existing = _read_existing_records(out, fmt)
+        try:
+            timestamps = [int(record["timestamp_unix"]) for record in existing]
+        except (KeyError, TypeError, ValueError) as exc:
+            raise ConfigError("Existing output contains an invalid timestamp.") from exc
+        if any(timestamp < _DATED_HISTORY_START for timestamp in timestamps):
+            raise ConfigError(
+                "Existing output contains pre-2002 records. Choose a new output file "
+                "or use --overwrite to replace it with a dated-only export."
+            )
+        if resume.lower() == "auto":
+            watermark = max(timestamps, default=None)
+    elif resume.lower() == "auto" and merge_existing:
         watermark = read_watermark(out, fmt)
 
     window = resolve_time_window(
@@ -304,8 +317,8 @@ def export_cmd(
         )
         raise typer.Exit(code=1)
 
-    merge_existing = out.exists() and not overwrite
-    existing = _read_existing_records(out, fmt) if merge_existing else []
+    if existing is None:
+        existing = _read_existing_records(out, fmt) if merge_existing else []
     new_records = [s.to_record(include_raw=include_raw) for s in scrobbles]
     # Preserve legacy NDJSON append behavior outside resume; resume keeps newest rows first.
     records = (

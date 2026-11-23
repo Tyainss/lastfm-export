@@ -38,8 +38,8 @@ def test_dated_only_export_bounds_the_history_search(monkeypatch, tmp_path):
         return from_unix + 1
 
     def collect(**kwargs):
-        assert kwargs["from_unix"] == floor + 1
-        return [Scrobble("A", "Song", None, floor + 1)], []
+        assert kwargs["from_unix"] == starts[-1] + 1
+        return [Scrobble("A", "Song", None, kwargs["from_unix"])], []
 
     monkeypatch.setattr(
         _FakeLastFMClient, "find_oldest_scrobble_unix", history_start, raising=False
@@ -62,12 +62,20 @@ def test_dated_only_export_bounds_the_history_search(monkeypatch, tmp_path):
     ]
     assert runner.invoke(app, args).exit_code == 0
     assert starts == [floor]
+    result = runner.invoke(app, args)
+    assert result.exit_code == 0, result.output
+    assert starts == [floor, floor + 2]
+    assert [
+        json.loads(line)["timestamp_unix"] for line in out.read_text().splitlines()
+    ] == [floor + 3, floor + 1]
+
+    # An existing raw export should not silently lose data when changing modes.
+    with out.open("a", encoding="utf-8") as stream:
+        stream.write('{"timestamp_unix":100}\n')
     before = out.read_bytes()
     result = runner.invoke(app, args)
     assert result.exit_code != 0
-    assert "--dated-only requires a new output file or --overwrite" in str(
-        result.exception
-    )
+    assert "Existing output contains pre-2002 records" in str(result.exception)
     assert out.read_bytes() == before
 
 

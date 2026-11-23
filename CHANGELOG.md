@@ -9,6 +9,7 @@
 ### Fixed
 
 - Avoided scanning empty decades when verifying exports with pre-2002 records.
+- Allowed dated-only exports to resume.
 
 ## [0.6.1] - 2026-11-19
 

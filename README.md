@@ -49,7 +49,8 @@ lastfm-export scrobbles export --out july.csv --from 2026-07-01 --to 2026-07-31
 Dates use UTC and include both the start and end date.
 
 Use `--dated-only` to exclude records timestamped before January 1, 2002 UTC.
-Choose a new output file or use `--overwrite` when switching to this option.
+Run the same command again to add new listens. If your existing export contains
+pre-2002 records, choose a new output file or use `--overwrite` to replace it.
 
 ## Collect artist information
 
