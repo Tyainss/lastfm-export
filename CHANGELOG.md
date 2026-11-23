@@ -2,6 +2,8 @@
 
 ## [Unreleased]
 
+## [0.6.2] - 2026-11-23
+
 ### Added
 
 - Added `--dated-only` to exclude timestamps before 2002 from scrobble exports.
