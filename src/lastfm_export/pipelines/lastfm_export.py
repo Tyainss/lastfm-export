@@ -5,7 +5,7 @@ from datetime import date
 from typing import Iterator, Literal, Optional
 
 from lastfm_export.clients.lastfm import LastFMClient
-from lastfm_export.integrity import WindowReport
+from lastfm_export.integrity import WindowReport, WindowResult
 from lastfm_export.models import Scrobble
 
 
@@ -21,6 +21,28 @@ def _overlap_retry_size(report: WindowReport, page_size: int) -> int | None:
     if any(v.startswith("exact raw-payload overlap") for v in report.violations):
         return 199 if page_size >= 200 else page_size + 1
     return None
+
+
+def _fetch_verified_range(
+    *,
+    lastfm: LastFMClient,
+    from_unix: int,
+    to_unix: int,
+    page_size: int,
+) -> WindowResult:
+    result = lastfm.fetch_recent_tracks_window(
+        from_unix=from_unix,
+        to_unix=to_unix,
+        page_size=page_size,
+    )
+    retry_size = _overlap_retry_size(result.report, page_size)
+    if retry_size is not None:
+        result = lastfm.fetch_recent_tracks_window(
+            from_unix=from_unix,
+            to_unix=to_unix,
+            page_size=retry_size,
+        )
+    return result
 
 
 def iter_utc_windows(
@@ -119,18 +141,12 @@ def collect_verified_scrobbles(
             datetime(day.year, day.month, day.day, tzinfo=timezone.utc).timestamp()
         )
         day_end = day_start + 86_399
-        result = lastfm.fetch_recent_tracks_window(
+        result = _fetch_verified_range(
+            lastfm=lastfm,
             from_unix=max(day_start, from_unix),
             to_unix=min(day_end, to_unix),
             page_size=page_size,
         )
-        retry_size = _overlap_retry_size(result.report, page_size)
-        if retry_size is not None:
-            result = lastfm.fetch_recent_tracks_window(
-                from_unix=max(day_start, from_unix),
-                to_unix=min(day_end, to_unix),
-                page_size=retry_size,
-            )
         reports.append(result.report)
         if not result.report.ok and stop_on_violation:
             if on_window_complete is not None:

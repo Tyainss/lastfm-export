@@ -9,7 +9,7 @@ from typer.testing import CliRunner
 
 from lastfm_export.cli.app import app
 from lastfm_export.cli.commands_scrobbles import _is_completed_full_quarter
-from lastfm_export.integrity import WindowReport
+from lastfm_export.integrity import WindowReport, WindowResult
 from lastfm_export.models import Scrobble
 
 
@@ -33,15 +33,17 @@ def test_dated_only_export_bounds_the_history_search(monkeypatch, tmp_path):
     floor = commands_scrobbles._DATED_HISTORY_START
     starts = []
 
-    def history_start(self, *, min_unix):
-        starts.append(min_unix)
-        return min_unix + 1
+    def history_start(self, *, from_unix, to_unix):
+        starts.append(from_unix)
+        return from_unix + 1
 
     def collect(**kwargs):
         assert kwargs["from_unix"] == floor + 1
         return [Scrobble("A", "Song", None, floor + 1)], []
 
-    monkeypatch.setattr(_FakeLastFMClient, "get_user_history_start_unix", history_start)
+    monkeypatch.setattr(
+        _FakeLastFMClient, "find_oldest_scrobble_unix", history_start, raising=False
+    )
     monkeypatch.setattr(commands_scrobbles, "LastFMClient", _FakeLastFMClient)
     monkeypatch.setattr(commands_scrobbles, "collect_verified_scrobbles", collect)
     out = tmp_path / "dated.ndjson"
@@ -67,6 +69,53 @@ def test_dated_only_export_bounds_the_history_search(monkeypatch, tmp_path):
         result.exception
     )
     assert out.read_bytes() == before
+
+
+def test_verified_full_export_fetches_early_records_as_one_range(monkeypatch, tmp_path):
+    from lastfm_export.cli import commands_scrobbles
+
+    floor = commands_scrobbles._DATED_HISTORY_START
+    cutoff = floor + 1000 * 86_400
+    calls = []
+
+    class Client:
+        def __init__(self, **kwargs):
+            pass
+
+        def find_oldest_scrobble_unix(self, *, from_unix, to_unix):
+            assert (from_unix, to_unix) == (floor, cutoff)
+            return cutoff
+
+        def fetch_recent_tracks_window(self, *, from_unix, to_unix, page_size):
+            calls.append((from_unix, to_unix))
+            timestamps = [cutoff] if from_unix == cutoff else [99, 99]
+            events = [Scrobble("A", "Song", None, seconds) for seconds in timestamps]
+            return WindowResult(
+                events, WindowReport(from_unix, to_unix, len(events), len(events), 1)
+            )
+
+    monkeypatch.setattr(commands_scrobbles, "LastFMClient", Client)
+    out = tmp_path / "full.ndjson"
+    result = runner.invoke(
+        app,
+        [
+            "scrobbles",
+            "export",
+            "--out",
+            str(out),
+            "--api-key",
+            "test",
+            "--username",
+            "u",
+            "--to-unix",
+            str(cutoff),
+        ],
+    )
+    assert result.exit_code == 0, result.output
+    assert calls == [(cutoff, cutoff), (0, floor - 1)]
+    assert [
+        json.loads(line)["timestamp_unix"] for line in out.read_text().splitlines()
+    ] == [cutoff, 99, 99]
 
 
 def _records():
@@ -256,7 +305,7 @@ def test_private_history_during_start_probe_keeps_friendly_cli_error(
         def __init__(self, **kwargs):
             pass
 
-        def get_user_history_start_unix(self):
+        def find_oldest_scrobble_unix(self, **kwargs):
             raise LastFMRecentTracksAccessError("Hide recent listening information")
 
     monkeypatch.setattr("lastfm_export.cli.commands_scrobbles.LastFMClient", Client)

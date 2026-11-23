@@ -546,6 +546,51 @@ def test_history_start_search_finds_first_month_without_scanning_empty_years(
     assert len(http.calls) <= 12
 
 
+@pytest.mark.parametrize("shifted", [False, True])
+def test_bounded_oldest_search_checks_skipped_prefix_and_falls_back(shifted):
+    floor = 1_010_000_000
+    oldest = floor + 200_000
+    dates = list(range(oldest + 200, oldest - 1, -1))
+
+    class ProbeHttp:
+        def __init__(self):
+            self.calls = []
+
+        def get_response(self, url, *, params, **kwargs):
+            self.calls.append(params)
+            assert params["from"] == floor
+            page, size = params["page"], params["limit"]
+            found = [timestamp for timestamp in dates if timestamp < params["to"]]
+            selected = found[(page - 1) * size : page * size]
+            if shifted and page == 2:
+                selected = [oldest + 1]
+            return JsonResponse(
+                {
+                    "recenttracks": {
+                        "@attr": {
+                            "total": str(len(found)),
+                            "totalPages": str((len(found) + size - 1) // size),
+                            "page": str(page),
+                        },
+                        "track": [_window_track(t, "Song") for t in selected],
+                    }
+                },
+                200,
+                1,
+            )
+
+    http = ProbeHttp()
+    client = LastFMClient(api_key="key", username="u", user_agent="tests", http=http)
+    start = client.find_oldest_scrobble_unix(from_unix=floor, to_unix=oldest + 300)
+    assert oldest - 86_399 <= start <= oldest
+    assert [p["page"] for p in http.calls[:3]] == [1, 2, 1]
+    if not shifted:
+        assert start == oldest
+        assert len(http.calls) == 3
+    else:
+        assert len(http.calls) > 3
+
+
 def test_history_search_rejects_inconsistent_mid_search_response():
     registered = int(datetime(2024, 1, 1, tzinfo=timezone.utc).timestamp())
     http = _FakeHttp(

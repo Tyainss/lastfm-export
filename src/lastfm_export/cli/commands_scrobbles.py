@@ -26,6 +26,7 @@ from lastfm_export.io.readers import (
 from lastfm_export.io.sinks import csv_sink, json_sink, ndjson_sink
 from lastfm_export.pipelines.lastfm_export import (
     VerifiedProgress,
+    _fetch_verified_range,
     collect_verified_scrobbles,
     export_scrobbles,
 )
@@ -156,13 +157,35 @@ def export_cmd(
     if snapshot_to is None:
         snapshot_to = int(time.time())
     snapshot_from = window.from_unix
-    if snapshot_from is None:
+    search_dated = (
+        snapshot_from is None
+        and snapshot_to >= _DATED_HISTORY_START
+        and (dated_only or mode == "verified")
+    )
+    early_from = None
+    dated_from = None
+    if search_dated:
+        minimum = max(
+            _DATED_HISTORY_START, watermark + 1 if watermark is not None else 0
+        )
         try:
-            snapshot_from = (
-                lastfm.get_user_history_start_unix(min_unix=_DATED_HISTORY_START)
-                if dated_only
-                else lastfm.get_user_history_start_unix()
-            )
+            if minimum <= snapshot_to:
+                dated_from = lastfm.find_oldest_scrobble_unix(
+                    from_unix=minimum, to_unix=snapshot_to
+                )
+        except LastFMRecentTracksAccessError as e:
+            typer.echo(f"Error: {e}", err=True)
+            raise typer.Exit(code=1) from e
+        snapshot_from = (
+            dated_from if dated_from is not None else min(minimum, snapshot_to)
+        )
+        if not dated_only and (
+            watermark is None or watermark < _DATED_HISTORY_START - 1
+        ):
+            early_from = 0 if watermark is None else max(0, watermark + 1)
+    elif snapshot_from is None:
+        try:
+            snapshot_from = lastfm.get_user_history_start_unix()
         except LastFMRecentTracksAccessError as e:
             typer.echo(f"Error: {e}", err=True)
             raise typer.Exit(code=1) from e
@@ -196,18 +219,32 @@ def export_cmd(
         )
 
     try:
+        scrobbles, reports = [], []
         if mode == "verified":
-            scrobbles, reports = collect_verified_scrobbles(
-                lastfm=lastfm,
-                from_unix=snapshot_from,
-                to_unix=snapshot_to,
-                page_size=page_size,
-                watermark=watermark,
-                stop_on_violation=policy == "strict",
-                on_window_start=on_window_start,
-                on_window_complete=on_window_complete,
-            )
-        else:
+            if not search_dated or dated_from is not None:
+                scrobbles, reports = collect_verified_scrobbles(
+                    lastfm=lastfm,
+                    from_unix=snapshot_from,
+                    to_unix=snapshot_to,
+                    page_size=page_size,
+                    watermark=watermark,
+                    stop_on_violation=policy == "strict",
+                    on_window_start=on_window_start,
+                    on_window_complete=on_window_complete,
+                )
+            if early_from is not None and (
+                policy != "strict" or all(r.ok for r in reports)
+            ):
+                early = _fetch_verified_range(
+                    lastfm=lastfm,
+                    from_unix=early_from,
+                    to_unix=_DATED_HISTORY_START - 1,
+                    page_size=page_size,
+                )
+                reports.append(early.report)
+                if early.report.ok or policy == "warn":
+                    scrobbles.extend(early.scrobbles)
+        elif not search_dated or dated_from is not None:
             scrobbles = list(
                 export_scrobbles(
                     lastfm=lastfm,
@@ -219,7 +256,6 @@ def export_cmd(
                     on_page=on_fast_page,
                 )
             )
-            reports = []
     except LastFMRecentTracksAccessError as e:
         progress_reporter.close()
         typer.echo(f"Error: {e}", err=True)
@@ -245,7 +281,7 @@ def export_cmd(
         report = {
             "status": status,
             "acquisition_mode": mode,
-            "from_unix": snapshot_from,
+            "from_unix": early_from if early_from is not None else snapshot_from,
             "to_unix": snapshot_to,
             "watermark": watermark,
             "windows": [report.to_record() for report in reports],
