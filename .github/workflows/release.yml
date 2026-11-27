@@ -1,20 +1,22 @@
 name: Release
 
 on:
-  push:
-    tags:
-      - "v*"
+  release:
+    types: [published]
+
+permissions: {}
 
 jobs:
-  publish:
+  build:
+    if: ${{ !github.event.release.prerelease && startsWith(github.event.release.tag_name, 'v') }}
     runs-on: ubuntu-latest
-    environment: pypi
     permissions:
-      id-token: write
       contents: read
 
     steps:
       - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
 
       - name: Set up Python
         uses: actions/setup-python@v5
@@ -26,8 +28,39 @@ jobs:
         with:
           enable-cache: true
 
+      - name: Check release version
+        run: |
+          python - <<'PY'
+          import os
+          import tomllib
+          from pathlib import Path
+
+          project = tomllib.loads(Path("pyproject.toml").read_text())["project"]
+          expected_tag = "v" + project["version"]
+          if os.environ["GITHUB_REF_NAME"] != expected_tag:
+              raise SystemExit(f"Expected release tag {expected_tag}")
+          PY
+
       - name: Build
         run: uv build --no-sources
 
+      - uses: actions/upload-artifact@v7
+        with:
+          name: distributions
+          path: dist/
+          if-no-files-found: error
+
+  publish:
+    needs: build
+    runs-on: ubuntu-latest
+    environment: pypi
+    permissions:
+      id-token: write
+    steps:
+      - uses: actions/download-artifact@v8
+        with:
+          name: distributions
+          path: dist/
+
       - name: Publish
-        run: uv publish
+        uses: pypa/gh-action-pypi-publish@release/v1

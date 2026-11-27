@@ -8,12 +8,27 @@ version = "0.6.2"
 description = "Export your Last.fm listening history and optionally enrich it with Spotify metadata."
 readme = "README.md"
 requires-python = ">=3.10"
-license = { file = "LICENSE" }
+license = "MIT"
+license-files = ["LICENSE"]
 keywords = ["lastfm", "spotify", "export", "scrobbles", "cli"]
+classifiers = [
+    "Environment :: Console",
+    "Development Status :: 4 - Beta",
+    "Intended Audience :: Developers",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Programming Language :: Python :: 3.13",
+    "Topic :: Utilities",
+]
 dependencies = [
     "requests>=2.32.5",
     "typer>=0.24.1",
 ]
+
+[project.urls]
+Repository = "https://github.com/Tyainss/lastfm-export"
 
 [project.optional-dependencies]
 dotenv = ["python-dotenv>=1.2.1"]
