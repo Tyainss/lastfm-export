@@ -5,16 +5,18 @@ on:
     tags:
       - "v*"
 
+permissions: {}
+
 jobs:
-  publish:
+  build:
     runs-on: ubuntu-latest
-    environment: pypi
     permissions:
-      id-token: write
       contents: read
 
     steps:
       - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
 
       - name: Set up Python
         uses: actions/setup-python@v5
@@ -29,5 +31,23 @@ jobs:
       - name: Build
         run: uv build --no-sources
 
+      - uses: actions/upload-artifact@v7
+        with:
+          name: distributions
+          path: dist/
+          if-no-files-found: error
+
+  publish:
+    needs: build
+    runs-on: ubuntu-latest
+    environment: pypi
+    permissions:
+      id-token: write
+    steps:
+      - uses: actions/download-artifact@v8
+        with:
+          name: distributions
+          path: dist/
+
       - name: Publish
-        run: uv publish
+        uses: pypa/gh-action-pypi-publish@release/v1
