@@ -244,4 +244,8 @@ TestPyPI tags use:
 test-vX.Y.Z
 ```
 
+For production releases, update the package version and `CHANGELOG.md`, then merge the changes into `main` and verify CI passes. Publish a GitHub Release with the matching version tag and copy the corresponding changelog section into the release description.
+
+TestPyPI publishing is triggered by pushing a `test-vX.Y.Z` tag.
+
 Publishing is handled by the GitHub Actions workflows in `.github/workflows/`.

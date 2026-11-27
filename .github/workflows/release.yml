@@ -1,14 +1,14 @@
 name: Release
 
 on:
-  push:
-    tags:
-      - "v*"
+  release:
+    types: [published]
 
 permissions: {}
 
 jobs:
   build:
+    if: ${{ !github.event.release.prerelease && startsWith(github.event.release.tag_name, 'v') }}
     runs-on: ubuntu-latest
     permissions:
       contents: read
@@ -27,6 +27,19 @@ jobs:
         uses: astral-sh/setup-uv@v6
         with:
           enable-cache: true
+
+      - name: Check release version
+        run: |
+          python - <<'PY'
+          import os
+          import tomllib
+          from pathlib import Path
+
+          project = tomllib.loads(Path("pyproject.toml").read_text())["project"]
+          expected_tag = "v" + project["version"]
+          if os.environ["GITHUB_REF_NAME"] != expected_tag:
+              raise SystemExit(f"Expected release tag {expected_tag}")
+          PY
 
       - name: Build
         run: uv build --no-sources
